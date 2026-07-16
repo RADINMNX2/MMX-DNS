@@ -1,21 +1,106 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 🌐 MNX DNS
+> یک ابزار مدرن، بهینه و با کارایی بالا جهت تغییر و مدیریت دی‌ان‌اس (DNS) در سیستم‌عامل اندروید، طراحی شده با تمرکز بر امنیت، حریم خصوصی و سرعت.
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+[![Android Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com)
+[![Kotlin Version](https://img.shields.io/badge/Kotlin-2.2.21-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![UI Framework](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![Gradle Build](https://img.shields.io/badge/Gradle-9.3.1-02303A?style=flat-square&logo=gradle&logoColor=white)](https://gradle.org)
+[![Developer](https://img.shields.io/badge/Developer-RADINMNX-00F0FF?style=flat-square&logo=github&logoColor=white)](https://github.com/RADINMNX2)
 
-View your app in AI Studio: https://ai.studio/apps/d9c535c4-b725-43cc-acbb-b16c873e1b6a
+---
 
-## Run Locally
+## 📝 معرفی پروژه
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+اپلیکیشن **MNX DNS** یک سامانه کلاینت دی‌ان‌اس بومی برای اندروید است که به کاربران اجازه می‌دهد سرورهای DNS خود را بدون نیاز به دسترسی روت (Root) تغییر دهند. این برنامه با استفاده از رابط بومی `VpnService` اندروید، یک تونل محلی (Local VPN) روی دستگاه ایجاد می‌کند که فقط و فقط درخواست‌های دی‌ان‌اس (پورت ۵۳) را رهگیری کرده و به سرورهای تعریف‌شده هدایت می‌نماید. ترافیک اصلی اینترنت کاربر به هیچ وجه از سرور خارجی عبور نکرده و حریم خصوصی به‌طور کامل حفظ می‌شود.
 
+طراحی بصری این نرم‌افزار بر پایه **Material Design 3** با رویکرد مدرن و سایبرپانک انجام شده و با استفاده از کتابخانه‌های روز اندروید، پایداری و بازدهی حداکثری را ارائه می‌دهد.
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+---
+
+## ⚡ ویژگی‌های برجسته فنی و عملکردی
+
+### ۱. هسته قدرتمند و تعاملی کنترلر دی‌ان‌اس (MNX Core)
+- **کلید رآکتور لمسی هولوگرافیک**: سوییچ مرکزی پیشرفته با انیمیشن‌های چندبعدی جهت فعال و غیرفعال‌سازی تونل امن.
+- **سیستم پایش پینگ زنده (Latency Wave System)**: رسم فرکانس فیزیکی و امواج نوسانی بر اساس نرخ تاخیر (Latency) لحظه‌ای سرور دی‌ان‌اس فعال. اگر پینگ شما زیر ۶۰ میلی‌ثانیه باشد، موج به رنگ سبز/سایبر تغیر یافته و در زمان قطعی یا تاخیر بالا به رنگ هشدار در می‌آید.
+
+### ۲. مدیریت هوشمند پروفایل‌ها (Profile Management)
+- امکان تعریف، ویرایش و حذف سرورهای DNS سفارشی با تفکیک آدرس‌های Primary و Secondary.
+- پروفایل‌های پیش‌فرض بهینه‌سازی شده (مانند Google DNS, Cloudflare, NextDNS, AdGuard) برای مصارف مختلف (دور زدن تحریم، حذف تبلیغات، امنیت کودک).
+
+### ۳. حالت شتاب‌دهنده دوگانه (MNX Turbo Flow)
+- بهینه‌سازی پشته شبکه جهت حل‌وفصل موازی کوئری‌ها بر روی IPv4 و IPv6 به‌منظور کاهش چشم‌گیر زمان پاسخ‌دهی لود صفحات وب.
+
+### ۴. آمار زنده و امنیت یکپارچه
+- محاسبه دقیق و لحظه‌ای تعداد درخواست‌های فیلتر شده و کوئری‌های پاسخ داده شده ایمن (`Shield Secured queries`).
+- ثبات اتصال به کمک تایمر آپ‌تایم هوشمند بدون ایجاد بار اضافه بر روی پردازنده دستگاه.
+
+---
+
+## 🛠 معماری فنی و پشته فناوری‌ها (Tech Stack)
+
+نرم‌افزار طبق استانداردهای پیشرفته توسعه اندروید پیاده‌سازی شده است:
+
+- **زبان توسعه**: Kotlin (مدرن و کاملاً Type-safe)
+- **رابط کاربری**: Jetpack Compose با معماری تک‌صفحه‌ای پویا و Edge-to-Edge.
+- **معماری نرم‌افزار**: MVVM (Model-View-ViewModel) همراه با جریان‌های داده واکنشی (`StateFlow` و `SharedFlow`).
+- **مدیریت عملیات ناهمگام**: Kotlin Coroutines جهت جلوگیری از بلاک شدن Thread اصلی رابط کاربری.
+- **ذخیره‌سازی اطلاعات**: Room Database با پیش‌پردازنده کدهای KSP برای پایداری داده‌های کاربر در وضعیت آفلاین.
+- **تست و صحت‌سنجی**: Robolectric و Roborazzi جهت تست صحت عملکرد بدون نیاز به شبیه‌سازهای سنگین.
+
+---
+
+## 📦 راهنمای ساخت و اجرای پروژه (Build Guide)
+
+برای کامپایل و خروجی گرفتن از نرم‌افزار روی سیستم خود، مراحل زیر را دنبال کنید:
+
+### نیازمندی‌ها
+- **JDK 17** یا بالاتر نصب شده روی سیستم
+- **Android SDK** به همراه آخرین آپدیت‌های Command Line Tools
+- **Gradle 9.3.1** (به‌طور خودکار از طریق Wrapper مدیریت می‌شود)
+
+### دستورات خط فرمان
+
+۱. ابتدا مخزن را شبیه‌سازی کنید:
+```bash
+git clone https://github.com/RADINMNX2/MMX-DNS.git
+cd MMX-DNS
+```
+
+۲. تنظیم متغیرهای محیطی:
+یک فایل به نام `.env` در مسیر ریشه بسازید و متغیرهای مورد نیاز را قرار دهید (طبق نمونه `.env.example`).
+
+۳. ساخت نسخه دیباگ (Debug APK):
+```bash
+./gradlew assembleDebug
+```
+
+۴. ساخت نسخه نهایی و بهینه‌شده جهت انتشار (Release APK):
+```bash
+./gradlew assembleRelease
+```
+فایل‌های خروجی در مسیر زیر قرار خواهند گرفت:
+`app/build/outputs/apk/`
+
+---
+
+## 🤖 یکپارچه‌سازی با CI/CD (GitHub Actions)
+
+پروژه مجهز به یک پایپ‌لاین پیشرفته و مدرن در مسیر `.github/workflows/android-build.yml` است که با هر Push بر روی شاخه‌های اصلی کارهای زیر را به‌صورت کاملاً خودکار انجام می‌دهد:
+- راه‌اندازی متغیرهای محیطی جاوا، گریدل و متغیرهای امنیتی.
+- بیلد موازی گریدل به کمک سیستم کشینگ پیشرفته بسته‌ها جهت سرعت بخشیدن به فرآیند ساخت.
+- بیلد هر دو نسخه دباگ و ریلیز به همراه تولید خودکار Keystore موقت جهت امضای موفق فایل APK بدون کرش‌های متداول بیلد.
+- آپلود آرتیفکت نهایی اندروید جهت دانلود مستقیم.
+
+---
+
+## 👨‍💻 توسعه‌دهنده و طراح سیستم
+
+این پروژه با عشق و دقت فراوان توسط **RADINMNX** توسعه یافته و نگهداری می‌شود.
+
+- **Developer**: RADINMNX
+- **Email**: [radinmnx@gmail.com](mailto:radinmnx@gmail.com)
+
+---
+*توسعه داده شده تحت اصول دسترسی‌پذیری و استانداردهای طراحی متریال ۳.*
