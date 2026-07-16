@@ -52,7 +52,7 @@ jobs:
             npm ci
           else
             npm install
-          }
+          fi
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
