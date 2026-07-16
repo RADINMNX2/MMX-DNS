@@ -54,14 +54,13 @@ fun DashboardScreen(
     isPinging: Boolean,
     totalQueriesResolved: Int,
     connectionUptime: String,
+    isTurboEnabled: Boolean,
+    onToggleTurbo: (Boolean) -> Unit,
     onToggleVpn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isConnected = vpnState == VpnState.CONNECTED
     val isConnecting = vpnState == VpnState.CONNECTING
-
-    // Turbo protocol mode state
-    var isTurboEnabled by remember { mutableStateOf(true) }
 
     // Infinite transitions for neon pulsing and glowing elements
     val infiniteTransition = rememberInfiniteTransition(label = "core_pulse")
@@ -778,7 +777,7 @@ fun DashboardScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(12.dp)
-                            .clickable { isTurboEnabled = !isTurboEnabled },
+                            .clickable { onToggleTurbo(!isTurboEnabled) },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -819,7 +818,7 @@ fun DashboardScreen(
 
                         Switch(
                             checked = isTurboEnabled,
-                            onCheckedChange = { isTurboEnabled = it },
+                            onCheckedChange = { onToggleTurbo(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color(0xFF04060A),
                                 checkedTrackColor = Color(0xFF00F0FF),

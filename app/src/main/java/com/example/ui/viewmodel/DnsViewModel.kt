@@ -37,6 +37,11 @@ class DnsViewModel(
     val activePrimaryDns: StateFlow<String> = DnsVpnService.activePrimaryDns
     val activeSecondaryDns: StateFlow<String> = DnsVpnService.activeSecondaryDns
     val totalQueriesResolved: StateFlow<Int> = DnsVpnService.totalQueriesResolved
+    val logs: StateFlow<List<com.example.service.DnsLogEntry>> = DnsVpnService.logs
+
+    fun clearLogs() {
+        DnsVpnService.clearLogs()
+    }
 
     private val _connectionUptime = MutableStateFlow("00:00:00")
     val connectionUptime: StateFlow<String> = _connectionUptime.asStateFlow()
@@ -49,6 +54,29 @@ class DnsViewModel(
 
     private val _selectedProfile = MutableStateFlow<DnsProfile?>(null)
     val selectedProfile: StateFlow<DnsProfile?> = _selectedProfile.asStateFlow()
+
+    private val _isTurboEnabled = MutableStateFlow(true)
+    val isTurboEnabled: StateFlow<Boolean> = _isTurboEnabled.asStateFlow()
+
+    fun setTurboEnabled(enabled: Boolean) {
+        _isTurboEnabled.value = enabled
+        // If VPN is connected, dynamically switch to the new protocol instantly!
+        if (vpnState.value == VpnState.CONNECTED) {
+            val currentSelected = _selectedProfile.value ?: return
+            val intent = Intent(context, DnsVpnService::class.java).apply {
+                action = DnsVpnService.ACTION_START
+                putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
+                putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
+                putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (enabled) "DoH" else "UDP")
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+    }
 
     init {
         // Automatically fetch default/first profile and start periodic ping tests
@@ -102,6 +130,7 @@ class DnsViewModel(
                     putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, profile.primaryDns)
                     putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, profile.secondaryDns)
                     putExtra(DnsVpnService.EXTRA_PROFILE_NAME, profile.name)
+                    putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -120,6 +149,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -158,6 +188,7 @@ class DnsViewModel(
                             putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, nextProfile.primaryDns)
                             putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, nextProfile.secondaryDns)
                             putExtra(DnsVpnService.EXTRA_PROFILE_NAME, nextProfile.name)
+                            putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
                         }
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             context.startForegroundService(intent)
@@ -205,6 +236,7 @@ class DnsViewModel(
                         putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, primary)
                         putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, secondary)
                         putExtra(DnsVpnService.EXTRA_PROFILE_NAME, name)
+                        putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
                     }
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         context.startForegroundService(intent)

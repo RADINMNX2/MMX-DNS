@@ -14,12 +14,30 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.nio.ByteBuffer
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 enum class VpnState {
@@ -28,10 +46,29 @@ enum class VpnState {
     CONNECTED
 }
 
+enum class LogType {
+    INFO, SUCCESS, WARNING, ERROR
+}
+
+data class DnsLogEntry(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val timestamp: Long = System.currentTimeMillis(),
+    val type: LogType,
+    val tag: String,
+    val message: String
+)
+
+data class SecureDnsConfig(
+    val ip: String,
+    val dotHost: String,
+    val dohUrl: String
+)
+
 class DnsVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var workerThread: Thread? = null
+    private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
         private const val TAG = "DnsVpnService"
@@ -44,6 +81,7 @@ class DnsVpnService : VpnService() {
         const val EXTRA_PRIMARY_DNS = "primary_dns"
         const val EXTRA_SECONDARY_DNS = "secondary_dns"
         const val EXTRA_PROFILE_NAME = "profile_name"
+        const val EXTRA_PROTOCOL = "protocol" // Values: "DoH", "DoT", "UDP"
 
         private val _state = MutableStateFlow(VpnState.DISCONNECTED)
         val state: StateFlow<VpnState> = _state.asStateFlow()
@@ -60,8 +98,129 @@ class DnsVpnService : VpnService() {
         private val _totalQueriesResolved = MutableStateFlow(0)
         val totalQueriesResolved: StateFlow<Int> = _totalQueriesResolved.asStateFlow()
 
+        private val _logs = MutableStateFlow<List<DnsLogEntry>>(emptyList())
+        val logs: StateFlow<List<DnsLogEntry>> = _logs.asStateFlow()
+
+        fun log(type: LogType, tag: String, message: String) {
+            val entry = DnsLogEntry(type = type, tag = tag, message = message)
+            val current = _logs.value.toMutableList()
+            current.add(0, entry)
+            if (current.size > 200) {
+                current.removeAt(current.lastIndex)
+            }
+            _logs.value = current
+            Log.d(TAG, "[$type] $tag: $message")
+        }
+
+        fun clearLogs() {
+            _logs.value = emptyList()
+        }
+
         @Volatile
         var isRunning = false
+
+        // Static registry of popular secure DNS servers mapping to hostname/endpoints
+        val SECURE_DNS_REGISTRY = mapOf(
+            "8.8.8.8" to SecureDnsConfig("8.8.8.8", "dns.google", "https://dns.google/dns-query"),
+            "8.8.4.4" to SecureDnsConfig("8.8.4.4", "dns.google", "https://dns.google/dns-query"),
+            "1.1.1.1" to SecureDnsConfig("1.1.1.1", "one.one.one.one", "https://cloudflare-dns.com/dns-query"),
+            "1.0.0.1" to SecureDnsConfig("1.0.0.1", "one.one.one.one", "https://cloudflare-dns.com/dns-query"),
+            "9.9.9.9" to SecureDnsConfig("9.9.9.9", "dns.quad9.net", "https://dns.quad9.net/dns-query"),
+            "149.112.112.112" to SecureDnsConfig("149.112.112.112", "dns.quad9.net", "https://dns.quad9.net/dns-query"),
+            "94.140.14.14" to SecureDnsConfig("94.140.14.14", "dns.adguard-dns.com", "https://dns.adguard-dns.com/dns-query"),
+            "94.140.15.15" to SecureDnsConfig("94.140.15.15", "dns.adguard-dns.com", "https://dns.adguard-dns.com/dns-query"),
+            "76.76.2.0" to SecureDnsConfig("76.76.2.0", "dns.controld.com", "https://dns.controld.com/dns-query"),
+            "76.76.10.0" to SecureDnsConfig("76.76.10.0", "dns.controld.com", "https://dns.controld.com/dns-query")
+        )
+    }
+
+    // Custom SocketFactory to automatically call protect() on every Socket created by OkHttp
+    private inner class ProtectedSocketFactory : SocketFactory() {
+        private val delegate = getDefault()
+
+        override fun createSocket(): Socket {
+            val socket = delegate.createSocket()
+            protect(socket)
+            return socket
+        }
+
+        override fun createSocket(host: String?, port: Int): Socket {
+            val socket = delegate.createSocket(host, port)
+            protect(socket)
+            return socket
+        }
+
+        override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket {
+            val socket = delegate.createSocket(host, port, localHost, localPort)
+            protect(socket)
+            return socket
+        }
+
+        override fun createSocket(address: InetAddress?, port: Int): Socket {
+            val socket = delegate.createSocket(address, port)
+            protect(socket)
+            return socket
+        }
+
+        override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket {
+            val socket = delegate.createSocket(address, port, localAddress, localPort)
+            protect(socket)
+            return socket
+        }
+    }
+
+    // Permissive SSL context used for secure connections to Direct IP custom DNS servers
+    private val permissiveSslContext by lazy {
+        val trustAllCertificates = arrayOf<TrustManager>(
+            object : X509TrustManager {
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+            }
+        )
+        SSLContext.getInstance("TLS").apply {
+            init(null, trustAllCertificates, SecureRandom())
+        }
+    }
+
+    private val bootstrapDns by lazy {
+        object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                for (config in SECURE_DNS_REGISTRY.values) {
+                    if (config.dotHost.equals(hostname, ignoreCase = true)) {
+                        return listOf(InetAddress.getByName(config.ip))
+                    }
+                    val dohUri = android.net.Uri.parse(config.dohUrl)
+                    if (dohUri.host?.equals(hostname, ignoreCase = true) == true) {
+                        return listOf(InetAddress.getByName(config.ip))
+                    }
+                }
+                try {
+                    if (hostname.matches(Regex("^[0-9.]+$"))) {
+                        return listOf(InetAddress.getByName(hostname))
+                    }
+                } catch (e: Exception) {}
+                return okhttp3.Dns.SYSTEM.lookup(hostname)
+            }
+        }
+    }
+
+    // Highly optimized OkHttpClient with low-latency configuration and VPN bypass
+    private val okHttpClient by lazy {
+        val trustManager = object : X509TrustManager {
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+        }
+        OkHttpClient.Builder()
+            .dns(bootstrapDns)
+            .socketFactory(ProtectedSocketFactory())
+            .sslSocketFactory(permissiveSslContext.socketFactory, trustManager)
+            .hostnameVerifier { _, _ -> true } // Trust any hostname for flexible IP-based custom DoH
+            .connectTimeout(1000, TimeUnit.MILLISECONDS)
+            .readTimeout(1000, TimeUnit.MILLISECONDS)
+            .writeTimeout(1000, TimeUnit.MILLISECONDS)
+            .build()
     }
 
     override fun onCreate() {
@@ -78,7 +237,8 @@ class DnsVpnService : VpnService() {
             val primary = intent.getStringExtra(EXTRA_PRIMARY_DNS) ?: "8.8.8.8"
             val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: "8.8.4.4"
             val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Custom"
-            startVpn(primary, secondary, name)
+            val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "UDP"
+            startVpn(primary, secondary, name, protocol)
         }
         return START_STICKY
     }
@@ -88,7 +248,7 @@ class DnsVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun startVpn(primaryDns: String, secondaryDns: String, profileName: String) {
+    private fun startVpn(primaryDns: String, secondaryDns: String, profileName: String, protocol: String) {
         if (isRunning) {
             stopVpn()
         }
@@ -99,17 +259,22 @@ class DnsVpnService : VpnService() {
         _activeSecondaryDns.value = secondaryDns
         _totalQueriesResolved.value = 0
 
-        // Create the notification to run as a foreground service
-        val notification = createNotification(profileName, "$primaryDns | $secondaryDns")
+        log(LogType.INFO, "ENGINE", "Initializing DNS Changer Engine...")
+        log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns)")
+        log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
+
+        val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
         startForeground(NOTIFICATION_ID, notification)
 
         isRunning = true
+        serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
         workerThread = thread(start = true, name = "DNS-VPN-Worker") {
             try {
-                runVpnTunnel(primaryDns, secondaryDns)
+                runVpnTunnel(primaryDns, secondaryDns, protocol)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in VPN tunnel thread", e)
+                log(LogType.ERROR, "ENGINE", "Critical error in worker thread: ${e.message}")
                 _state.value = VpnState.DISCONNECTED
             } finally {
                 stopSelf()
@@ -127,6 +292,8 @@ class DnsVpnService : VpnService() {
         _activeSecondaryDns.value = ""
         _totalQueriesResolved.value = 0
 
+        log(LogType.WARNING, "ENGINE", "Stopping DNS Changer Engine...")
+
         try {
             vpnInterface?.close()
         } catch (e: Exception) {
@@ -137,29 +304,29 @@ class DnsVpnService : VpnService() {
         workerThread?.interrupt()
         workerThread = null
 
-        // Trigger memory-level DNS Cache Flush
+        serviceScope.cancel()
+
         flushSystemDnsCache()
+        log(LogType.INFO, "CACHE", "System DNS resolution cache programmatically flushed.")
 
         stopForeground(true)
+        log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully. Default system DNS restored.")
     }
 
-    private fun runVpnTunnel(primaryDns: String, secondaryDns: String) {
-        // Establish the interface
+    private fun runVpnTunnel(primaryDns: String, secondaryDns: String, protocol: String) {
         val builder = Builder()
         builder.setSession("Vibrant DNS Changer")
-        builder.setMtu(1500)
         
-        // Local dummy IP address for our local routing
+        // Low-latency gaming MTU configuration to prevent UDP packet fragmentation
+        builder.setMtu(1360)
+        
         builder.addAddress("10.0.0.2", 32)
         
-        // Add our active DNS servers
         builder.addDnsServer(primaryDns)
         if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
             builder.addDnsServer(secondaryDns)
         }
 
-        // Intercept ONLY DNS traffic. To do this cleanly, we add specific routes to our target DNS IPs.
-        // This ensures other internet traffic doesn't get sucked into our empty local VPN!
         try {
             builder.addRoute(primaryDns, 32)
             if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
@@ -167,7 +334,6 @@ class DnsVpnService : VpnService() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add specific DNS routes, falling back to routing DNS subnet", e)
-            // Fallback: Add routing for common DNS subnets if routing is rejected
             try {
                 builder.addRoute("8.8.8.8", 32)
                 builder.addRoute("8.8.4.4", 32)
@@ -186,16 +352,11 @@ class DnsVpnService : VpnService() {
         }
 
         _state.value = VpnState.CONNECTED
-        Log.i(TAG, "VPN tunnel established successfully")
+        Log.i(TAG, "VPN tunnel established successfully with protocol: $protocol")
 
         val fileDescriptor = vpnInterface!!.fileDescriptor
         val input = FileInputStream(fileDescriptor)
         val output = FileOutputStream(fileDescriptor)
-
-        // Create protected UDP socket
-        val dnsSocket = DatagramSocket()
-        protect(dnsSocket)
-        dnsSocket.soTimeout = 2000
 
         val packetBuffer = ByteBuffer.allocate(32767)
 
@@ -204,7 +365,7 @@ class DnsVpnService : VpnService() {
                 packetBuffer.clear()
                 val length = input.read(packetBuffer.array())
                 if (length <= 0) {
-                    Thread.sleep(10)
+                    Thread.sleep(5) // Reduced sleep for faster cycle responsiveness
                     continue
                 }
 
@@ -214,10 +375,10 @@ class DnsVpnService : VpnService() {
                 val versionAndIHL = packetBuffer.get(0).toInt() and 0xFF
                 val version = versionAndIHL shr 4
                 val ihl = versionAndIHL and 0x0F
-                val protocol = packetBuffer.get(9).toInt() and 0xFF
+                val ipProtocol = packetBuffer.get(9).toInt() and 0xFF
 
                 // Check if UDP (17)
-                if (version == 4 && protocol == 17) {
+                if (version == 4 && ipProtocol == 17) {
                     val ipHeaderLength = ihl * 4
 
                     // Get Source and Destination IP
@@ -227,9 +388,6 @@ class DnsVpnService : VpnService() {
                     packetBuffer.position(12)
                     packetBuffer.get(srcIpBytes)
                     packetBuffer.get(dstIpBytes)
-
-                    val srcIp = InetAddress.getByAddress(srcIpBytes)
-                    val dstIp = InetAddress.getByAddress(dstIpBytes)
 
                     // Get UDP Source and Destination Ports
                     packetBuffer.position(ipHeaderLength)
@@ -246,73 +404,23 @@ class DnsVpnService : VpnService() {
                             packetBuffer.position(ipHeaderLength + 8)
                             packetBuffer.get(dnsQuery)
 
-                            // Route query to active DNS servers
-                            var success = false
-                            val dnsServersToTry = mutableListOf<String>()
-                            dnsServersToTry.add(primaryDns)
-                            if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-                                dnsServersToTry.add(secondaryDns)
-                            }
+                            // Clone header fields to prevent concurrency conflicts
+                            val srcIpBytesCopy = srcIpBytes.clone()
+                            val dstIpBytesCopy = dstIpBytes.clone()
 
-                            for (dnsIp in dnsServersToTry) {
-                                try {
-                                    val forwardPacket = DatagramPacket(
-                                        dnsQuery,
-                                        dnsQuery.size,
-                                        InetAddress.getByName(dnsIp),
-                                        53
-                                    )
-                                    dnsSocket.send(forwardPacket)
-
-                                    val responseBuffer = ByteArray(4096)
-                                    val receivePacket = DatagramPacket(responseBuffer, responseBuffer.size)
-                                    dnsSocket.receive(receivePacket)
-
-                                    val responseLength = receivePacket.length
-
-                                    // Build reply IP and UDP packet
-                                    val responseIpHeaderLength = 20
-                                    val responsePacketSize = responseIpHeaderLength + 8 + responseLength
-                                    val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
-
-                                    // IP Header Setup
-                                    responseBufferFull.put(0, 0x45.toByte()) // IPv4, IHL = 5 (20 bytes)
-                                    responseBufferFull.put(1, 0.toByte()) // TOS
-                                    responseBufferFull.putShort(2, responsePacketSize.toShort()) // Packet Length
-                                    responseBufferFull.putShort(4, 0.toShort()) // Ident
-                                    responseBufferFull.putShort(6, 0x4000.toShort()) // Flags (DF)
-                                    responseBufferFull.put(8, 64.toByte()) // TTL
-                                    responseBufferFull.put(9, 17.toByte()) // UDP Protocol
-                                    responseBufferFull.putShort(10, 0.toShort()) // IP Checksum (will fill later)
-
-                                    // Swap IPs (Destination becomes Source, Source becomes Destination)
-                                    responseBufferFull.position(12)
-                                    responseBufferFull.put(dstIpBytes) // Source IP (the original DNS server queried)
-                                    responseBufferFull.put(srcIpBytes) // Destination IP (the requesting client)
-
-                                    // UDP Header Setup
-                                    responseBufferFull.position(20)
-                                    responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
-                                    responseBufferFull.putShort(srcPort.toShort()) // Destination Port
-                                    responseBufferFull.putShort((8 + responseLength).toShort()) // Length
-                                    responseBufferFull.putShort(0.toShort()) // No checksum (0 is valid in UDP)
-
-                                    // DNS Payload
-                                    responseBufferFull.position(28)
-                                    responseBufferFull.put(responseBuffer, 0, responseLength)
-
-                                    // Calculate IP checksum
-                                    val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
-                                    responseBufferFull.putShort(10, ipChecksum)
-
-                                    // Write response packet back to VPN tunnel
-                                    output.write(responseBufferFull.array(), 0, responsePacketSize)
-                                    _totalQueriesResolved.value++
-                                    success = true
-                                    break // Resolved successfully!
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "DNS resolution timed out or failed on $dnsIp, trying next...", e)
-                                }
+                            // Hand off resolution to high-performance non-blocking coroutine
+                            serviceScope.launch {
+                                resolveDnsQueryAndReply(
+                                    dnsQuery,
+                                    srcIpBytesCopy,
+                                    dstIpBytesCopy,
+                                    srcPort,
+                                    dstPort,
+                                    output,
+                                    primaryDns,
+                                    secondaryDns,
+                                    protocol
+                                )
                             }
                         }
                     }
@@ -323,6 +431,267 @@ class DnsVpnService : VpnService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing VPN packet", e)
             }
+        }
+    }
+
+    private fun parseDnsQueryName(dnsQuery: ByteArray): String {
+        if (dnsQuery.size < 12) return "unknown"
+        val sb = StringBuilder()
+        var pos = 12
+        try {
+            while (pos < dnsQuery.size) {
+                val len = dnsQuery[pos].toInt() and 0xFF
+                if (len == 0) break
+                if (pos + 1 + len > dnsQuery.size) return "invalid"
+                if (sb.isNotEmpty()) {
+                    sb.append(".")
+                }
+                for (i in 0 until len) {
+                    sb.append((dnsQuery[pos + 1 + i].toInt() and 0xFF).toChar())
+                }
+                pos += 1 + len
+            }
+            return if (sb.isEmpty()) "unknown" else sb.toString()
+        } catch (e: Exception) {
+            return "parse_error"
+        }
+    }
+
+    private suspend fun resolveDnsQueryAndReply(
+        dnsQuery: ByteArray,
+        srcIpBytes: ByteArray,
+        dstIpBytes: ByteArray,
+        srcPort: Int,
+        dstPort: Int,
+        output: FileOutputStream,
+        primaryDns: String,
+        secondaryDns: String,
+        protocol: String
+    ) {
+        val domain = parseDnsQueryName(dnsQuery)
+        val dnsServersToTry = mutableListOf<String>()
+        dnsServersToTry.add(primaryDns)
+        if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
+            dnsServersToTry.add(secondaryDns)
+        }
+
+        log(LogType.INFO, "QUERY", "Requested: $domain via $protocol")
+
+        var response: ByteArray? = null
+
+        // Attempt selected secure protocol
+        for (dnsIp in dnsServersToTry) {
+            try {
+                response = when (protocol) {
+                    "DoH" -> resolveViaDoH(dnsQuery, dnsIp)
+                    "DoT" -> resolveViaDoT(dnsQuery, dnsIp)
+                    else -> resolveViaUdp(dnsQuery, dnsIp)
+                }
+                if (response != null) {
+                    log(LogType.SUCCESS, "RESOLVED", "Resolved $domain via $protocol ($dnsIp) successfully (${response.size} bytes)")
+                    break
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to resolve via $protocol on $dnsIp, trying next...", e)
+                log(LogType.WARNING, "RESOLVER", "Attempt failed for $domain via $protocol on $dnsIp: ${e.message}")
+            }
+        }
+
+        // Silent Fallback to optimized UDP if DoH/DoT fails or times out
+        if (response == null && (protocol == "DoH" || protocol == "DoT")) {
+            log(LogType.WARNING, "FALLBACK", "$protocol failed for $domain. Invoking ultra-low latency UDP fallback...")
+            for (dnsIp in dnsServersToTry) {
+                try {
+                    response = resolveViaUdp(dnsQuery, dnsIp)
+                    if (response != null) {
+                        log(LogType.SUCCESS, "RESOLVED", "Resolved $domain via fallback UDP ($dnsIp) successfully (${response.size} bytes)")
+                        break
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "UDP fallback failed on $dnsIp", e)
+                    log(LogType.ERROR, "RESOLVER", "UDP fallback failed on $dnsIp: ${e.message}")
+                }
+            }
+        }
+
+        if (response != null) {
+            try {
+                // Build reply IP and UDP packet
+                val responseIpHeaderLength = 20
+                val responsePacketSize = responseIpHeaderLength + 8 + response.size
+                val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+
+                // IP Header Setup
+                responseBufferFull.put(0, 0x45.toByte()) // IPv4, IHL = 5 (20 bytes)
+                responseBufferFull.put(1, 0.toByte()) // TOS
+                responseBufferFull.putShort(2, responsePacketSize.toShort()) // Packet Length
+                responseBufferFull.putShort(4, 0.toShort()) // Ident
+                responseBufferFull.putShort(6, 0x4000.toShort()) // Flags (DF)
+                responseBufferFull.put(8, 64.toByte()) // TTL
+                responseBufferFull.put(9, 17.toByte()) // UDP Protocol
+                responseBufferFull.putShort(10, 0.toShort()) // IP Checksum
+
+                // Swap IPs (Destination becomes Source, Source becomes Destination)
+                responseBufferFull.position(12)
+                responseBufferFull.put(dstIpBytes)
+                responseBufferFull.put(srcIpBytes)
+
+                // UDP Header Setup
+                responseBufferFull.position(20)
+                responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
+                responseBufferFull.putShort(srcPort.toShort()) // Destination Port
+                responseBufferFull.putShort((8 + response.size).toShort()) // Length
+                responseBufferFull.putShort(0.toShort()) // No checksum (0 is valid in UDP)
+
+                // DNS Payload
+                responseBufferFull.position(28)
+                responseBufferFull.put(response)
+
+                // Calculate IP checksum
+                val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
+                responseBufferFull.putShort(10, ipChecksum)
+
+                // Thread-safe synchronous write to local TUN
+                synchronized(output) {
+                    output.write(responseBufferFull.array(), 0, responsePacketSize)
+                }
+                _totalQueriesResolved.value++
+            } catch (e: Exception) {
+                Log.e(TAG, "Error writing back DNS response packet", e)
+                log(LogType.ERROR, "SYSTEM", "Error writing back DNS response packet: ${e.message}")
+            }
+        } else {
+            log(LogType.ERROR, "RESOLVER", "Failed to resolve $domain on all configured DNS servers!")
+        }
+    }
+
+    private suspend fun resolveViaUdp(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
+        var socket: DatagramSocket? = null
+        try {
+            socket = DatagramSocket()
+            protect(socket) // Bypasses the VPN loop
+            socket.soTimeout = 1000 // Tight 1-second timeout for responsive gaming
+            
+            // Tuned buffers to prevent packet loss under high connection loads
+            socket.sendBufferSize = 65536
+            socket.receiveBufferSize = 65536
+
+            val address = InetAddress.getByName(dnsIp)
+            val forwardPacket = DatagramPacket(dnsQuery, dnsQuery.size, address, 53)
+            socket.send(forwardPacket)
+
+            val responseBuffer = ByteArray(4096)
+            val receivePacket = DatagramPacket(responseBuffer, responseBuffer.size)
+            socket.receive(receivePacket)
+
+            val responseLength = receivePacket.length
+            val responseBytes = ByteArray(responseLength)
+            System.arraycopy(responseBuffer, 0, responseBytes, 0, responseLength)
+            responseBytes
+        } catch (e: Exception) {
+            Log.w(TAG, "UDP resolution query failed on $dnsIp: ${e.message}")
+            null
+        } finally {
+            try {
+                socket?.close()
+            } catch (e: Exception) {}
+        }
+    }
+
+    private suspend fun resolveViaDoT(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
+        var socket: Socket? = null
+        var sslSocket: SSLSocket? = null
+        try {
+            val config = SECURE_DNS_REGISTRY[dnsIp]
+            val host = config?.dotHost
+
+            // 1. Establish raw connection on port 853
+            socket = Socket()
+            protect(socket) // Bypasses the VPN loop
+            socket.soTimeout = 1000
+            socket.connect(InetSocketAddress(dnsIp, 853), 1000)
+
+            // 2. Wrap socket in SSL/TLS layer
+            val sslFactory = if (host != null) {
+                SSLSocketFactory.getDefault() as SSLSocketFactory
+            } else {
+                permissiveSslContext.socketFactory
+            }
+
+            sslSocket = sslFactory.createSocket(socket, host ?: dnsIp, 853, true) as SSLSocket
+            sslSocket.useClientMode = true
+            sslSocket.startHandshake()
+
+            val outputStream = sslSocket.outputStream
+            val inputStream = sslSocket.inputStream
+
+            // RFC 7858: 2-byte length header prefix + payload
+            val len = dnsQuery.size
+            val header = byteArrayOf(((len shr 8) and 0xFF).toByte(), (len and 0xFF).toByte())
+            outputStream.write(header)
+            outputStream.write(dnsQuery)
+            outputStream.flush()
+
+            // Read response 2-byte length header
+            val lenBuf = ByteArray(2)
+            var bytesRead = 0
+            while (bytesRead < 2) {
+                val r = inputStream.read(lenBuf, bytesRead, 2 - bytesRead)
+                if (r < 0) throw IOException("Socket closed while reading length header")
+                bytesRead += r
+            }
+            val responseLen = ((lenBuf[0].toInt() and 0xFF) shl 8) or (lenBuf[1].toInt() and 0xFF)
+
+            // Read response payload
+            val responseBuf = ByteArray(responseLen)
+            var bodyBytesRead = 0
+            while (bodyBytesRead < responseLen) {
+                val r = inputStream.read(responseBuf, bodyBytesRead, responseLen - bodyBytesRead)
+                if (r < 0) throw IOException("Socket closed while reading response payload")
+                bodyBytesRead += r
+            }
+
+            responseBuf
+        } catch (e: Exception) {
+            Log.w(TAG, "DoT query failed on $dnsIp: ${e.message}")
+            null
+        } finally {
+            try {
+                sslSocket?.close()
+            } catch (e: Exception) {}
+            try {
+                socket?.close()
+            } catch (e: Exception) {}
+        }
+    }
+
+    private suspend fun resolveViaDoH(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val config = SECURE_DNS_REGISTRY[dnsIp]
+            val dohUrl = config?.dohUrl ?: "https://$dnsIp/dns-query"
+
+            val mediaType = "application/dns-message".toMediaTypeOrNull()
+            val requestBody = dnsQuery.toRequestBody(mediaType)
+
+            val request = Request.Builder()
+                .url(dohUrl)
+                .post(requestBody)
+                .header("Content-Type", "application/dns-message")
+                .header("Accept", "application/dns-message")
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body
+                    body?.bytes()
+                } else {
+                    Log.w(TAG, "DoH query returned non-success code ${response.code} on $dnsIp")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "DoH query failed on $dnsIp: ${e.message}")
+            null
         }
     }
 
@@ -347,7 +716,6 @@ class DnsVpnService : VpnService() {
     private fun flushSystemDnsCache() {
         Log.i(TAG, "Flushing InetAddress system cache programmatically...")
         try {
-            // JVM level Cache Flush using Reflection on InetAddress addressCache
             val addressCacheField = InetAddress::class.java.getDeclaredField("addressCache")
             addressCacheField.isAccessible = true
             val addressCache = addressCacheField.get(null)

@@ -15,8 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +53,7 @@ fun MainScreen(
     val profiles by viewModel.allProfiles.collectAsStateWithLifecycle()
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
+    val isTurboEnabled by viewModel.isTurboEnabled.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
@@ -134,6 +137,32 @@ fun MainScreen(
                             color = if (isProfilesActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
                         )
                     }
+
+                    // Logs Tab button
+                    val isLogsActive = currentTab == 2
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { currentTab = 2 }
+                            .padding(vertical = 10.dp)
+                            .testTag("tab_logs")
+                    ) {
+                        Icon(
+                            imageVector = if (isLogsActive) Icons.Filled.History else Icons.Outlined.History,
+                            contentDescription = "Engine Logs",
+                            tint = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Logs",
+                            fontSize = 11.sp,
+                            fontWeight = if (isLogsActive) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
+                        )
+                    }
                 }
             }
         },
@@ -170,6 +199,8 @@ fun MainScreen(
                         isPinging = isPinging,
                         totalQueriesResolved = totalQueriesResolved,
                         connectionUptime = connectionUptime,
+                        isTurboEnabled = isTurboEnabled,
+                        onToggleTurbo = { viewModel.setTurboEnabled(it) },
                         onToggleVpn = {
                             val vpnPrepareIntent = VpnService.prepare(context)
                             if (vpnPrepareIntent != null) {
@@ -189,6 +220,13 @@ fun MainScreen(
                         onSaveProfile = { id, name, primary, secondary, isDefault, isCustom, onComplete ->
                             viewModel.saveProfile(id, name, primary, secondary, isDefault, isCustom, onComplete)
                         }
+                    )
+                }
+                2 -> {
+                    val logs by viewModel.logs.collectAsStateWithLifecycle()
+                    LogScreen(
+                        logs = logs,
+                        onClearLogs = { viewModel.clearLogs() }
                     )
                 }
             }
