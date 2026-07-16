@@ -1,0 +1,6 @@
+{
+  "name": "MNX DNS",
+  "description": "A highly modern Android DNS Changer app featuring low-level native DNS proxy routing, live latency testing, and custom profile management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

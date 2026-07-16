@@ -1,0 +1,40 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer Network Ring -->
+    <path
+        android:strokeColor="#00F0FF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 54,22 A 32,32 0 1,1 53.99,22 Z" />
+
+    <!-- Dashed Ring (Cyber styling) -->
+    <path
+        android:strokeColor="#8A2BE2"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 54,14 A 40,40 0 1,1 53.99,14 Z" />
+
+    <!-- Dynamic connection lines -->
+    <path
+        android:strokeColor="#00F0FF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 54,14 L 54,22 M 54,86 L 54,94 M 14,54 L 22,54 M 86,54 L 94,54" />
+
+    <!-- Cyber Shield Silhouette -->
+    <path
+        android:fillColor="#FF0072FF"
+        android:pathData="M 54,34 C 62,34 68,31 68,31 C 68,31 68,48 68,54 C 68,64 54,74 54,74 C 54,74 40,64 40,54 C 40,48 40,31 40,31 C 40,31 46,34 54,34 Z" />
+
+    <!-- Inside Core Routing Bolt -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 57,41 L 46,52 L 53,52 L 51,67 L 62,56 L 55,56 Z" />
+</vector>
