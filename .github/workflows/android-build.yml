@@ -1,4 +1,4 @@
-name: Android Release Build
+name: Android Build
 
 on:
   push:
@@ -16,10 +16,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD || 'android' }}
-      TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.TAURI_ANDROID_KEY_PASSWORD || 'android' }}
-      TAURI_ANDROID_KEY_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS || 'upload' }}
-      TAURI_ANDROID_KEYSTORE: ${{ github.workspace }}/src-tauri/gen/android/fallback.keystore
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+      KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
 
     steps:
       - name: Checkout Repository
@@ -31,95 +30,51 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
         with:
-          node-version: '20'
+          gradle-version: '8.5'
 
-      - name: Cache Node Modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            **/node_modules
-            ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-
-
-      - name: Install Frontend Dependencies
+      - name: Generate Gradle Wrapper
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
+          if [ ! -f gradlew ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper --gradle-version 8.5
           fi
+          chmod +x gradlew
 
-      - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: |
-            aarch64-linux-android
-            armv7-linux-androideabi
-            x86_64-linux-android
-            i686-linux-android
-
-      - name: Cache Cargo Registry & Build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Setup Android SDK & NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
+      - name: Create fallback .env file
         run: |
-          # Use NDK r25c or r26b which are stable and highly recommended for Tauri
-          sdkmanager --install "ndk;25.2.9519653"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/25.2.9519653" >> $GITHUB_ENV
-
-      - name: Cache Gradle Wrapper & Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          if [ ! -f .env ]; then
+            cp .env.example .env || touch .env
+          fi
 
       - name: Generate Fallback Keystore
         run: |
-          mkdir -p src-tauri/gen/android
           keytool -genkeypair \
             -v \
-            -keystore "$TAURI_ANDROID_KEYSTORE" \
-            -alias "$TAURI_ANDROID_KEY_ALIAS" \
+            -keystore "$KEYSTORE_PATH" \
+            -alias "upload" \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -storepass "$TAURI_ANDROID_KEYSTORE_PASSWORD" \
-            -keypass "$TAURI_ANDROID_KEY_PASSWORD" \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
             -dname "CN=MNX DNS, OU=Development, O=MNX, L=Global, S=Global, C=US"
 
-      - name: Build Android APK
-        run: npx tauri android build --apk
+      - name: Build Android APKs (Debug & Release)
+        run: ./gradlew assembleDebug assembleRelease --no-daemon
 
       - name: Locate and Package Artifacts
         run: |
           mkdir -p build-artifacts
           # Locate APK files and copy to artifacts directory
-          find src-tauri/gen/android/app/build/outputs/apk/ -name "*.apk" -exec cp {} build-artifacts/ \;
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} build-artifacts/ \;
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mnx-dns-release-apk
+          name: mnx-dns-apks
           path: build-artifacts/*.apk
           if-no-files-found: error
           retention-days: 14
