@@ -33,13 +33,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.5'
+          gradle-version: '9.3.1'
 
       - name: Generate Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
             echo "Generating Gradle wrapper..."
-            gradle wrapper --gradle-version 8.5
+            gradle wrapper --gradle-version 9.3.1
           fi
           chmod +x gradlew
 
