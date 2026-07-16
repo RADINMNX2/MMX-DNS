@@ -1,0 +1,125 @@
+name: Android Release Build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    env:
+      TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.TAURI_ANDROID_KEYSTORE_PASSWORD || 'android' }}
+      TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.TAURI_ANDROID_KEY_PASSWORD || 'android' }}
+      TAURI_ANDROID_KEY_ALIAS: ${{ secrets.TAURI_ANDROID_KEY_ALIAS || 'upload' }}
+      TAURI_ANDROID_KEYSTORE: ${{ github.workspace }}/src-tauri/gen/android/fallback.keystore
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache Node Modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install Frontend Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          }
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: |
+            aarch64-linux-android
+            armv7-linux-androideabi
+            x86_64-linux-android
+            i686-linux-android
+
+      - name: Cache Cargo Registry & Build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          # Use NDK r25c or r26b which are stable and highly recommended for Tauri
+          sdkmanager --install "ndk;25.2.9519653"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      - name: Cache Gradle Wrapper & Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Generate Fallback Keystore
+        run: |
+          mkdir -p src-tauri/gen/android
+          keytool -genkeypair \
+            -v \
+            -keystore "$TAURI_ANDROID_KEYSTORE" \
+            -alias "$TAURI_ANDROID_KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "$TAURI_ANDROID_KEYSTORE_PASSWORD" \
+            -keypass "$TAURI_ANDROID_KEY_PASSWORD" \
+            -dname "CN=MNX DNS, OU=Development, O=MNX, L=Global, S=Global, C=US"
+
+      - name: Build Android APK
+        run: npx tauri android build --apk
+
+      - name: Locate and Package Artifacts
+        run: |
+          mkdir -p build-artifacts
+          # Locate APK files and copy to artifacts directory
+          find src-tauri/gen/android/app/build/outputs/apk/ -name "*.apk" -exec cp {} build-artifacts/ \;
+
+      - name: Upload Android APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnx-dns-release-apk
+          path: build-artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14
