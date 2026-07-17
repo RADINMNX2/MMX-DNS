@@ -32,42 +32,6 @@ abstract class DnsDatabase : RoomDatabase() {
                             val dao = getDatabase(context).dnsProfileDao()
                             dao.insertProfile(
                                 DnsProfile(
-                                    name = "Radar Game",
-                                    primaryDns = "10.202.10.10",
-                                    secondaryDns = "10.202.10.11",
-                                    isDefault = false,
-                                    isCustom = false
-                                )
-                            )
-                            dao.insertProfile(
-                                DnsProfile(
-                                    name = "Electro",
-                                    primaryDns = "78.157.42.101",
-                                    secondaryDns = "78.157.42.100",
-                                    isDefault = false,
-                                    isCustom = false
-                                )
-                            )
-                            dao.insertProfile(
-                                DnsProfile(
-                                    name = "Shecan",
-                                    primaryDns = "178.22.122.100",
-                                    secondaryDns = "185.51.200.2",
-                                    isDefault = false,
-                                    isCustom = false
-                                )
-                            )
-                            dao.insertProfile(
-                                DnsProfile(
-                                    name = "403.online",
-                                    primaryDns = "10.202.10.202",
-                                    secondaryDns = "10.202.10.102",
-                                    isDefault = false,
-                                    isCustom = false
-                                )
-                            )
-                            dao.insertProfile(
-                                DnsProfile(
                                     name = "Google Public DNS",
                                     primaryDns = "8.8.8.8",
                                     secondaryDns = "8.8.4.4",

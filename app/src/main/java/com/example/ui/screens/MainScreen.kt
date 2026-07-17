@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.viewmodel.DnsViewModel
-import com.example.data.GamePreset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,9 +54,6 @@ fun MainScreen(
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isTurboEnabled by viewModel.isTurboEnabled.collectAsStateWithLifecycle()
-    val gamePings by viewModel.gamePings.collectAsStateWithLifecycle()
-    val activePreset by viewModel.activePreset.collectAsStateWithLifecycle()
-    val selectedPreset by viewModel.selectedPreset.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
@@ -205,10 +201,6 @@ fun MainScreen(
                         connectionUptime = connectionUptime,
                         isTurboEnabled = isTurboEnabled,
                         onToggleTurbo = { viewModel.setTurboEnabled(it) },
-                        gamePings = gamePings,
-                        activePreset = activePreset,
-                        selectedPreset = selectedPreset,
-                        onSelectPreset = { viewModel.selectPreset(it) },
                         onToggleVpn = {
                             val vpnPrepareIntent = VpnService.prepare(context)
                             if (vpnPrepareIntent != null) {
