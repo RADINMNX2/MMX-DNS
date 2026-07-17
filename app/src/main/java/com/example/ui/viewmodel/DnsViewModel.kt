@@ -11,6 +11,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.DnsDatabase
 import com.example.data.DnsProfile
 import com.example.data.DnsRepository
+import com.example.data.GamePreset
+import com.example.data.GamePingInfo
 import com.example.service.DnsVpnService
 import com.example.service.VpnState
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,40 @@ class DnsViewModel(
         DnsVpnService.clearLogs()
     }
 
+    private val _gamePings = MutableStateFlow<List<GamePingInfo>>(
+        listOf(
+            GamePingInfo("Valorant (Middle East)", "15.185.0.1", null, null, "OFFLINE"),
+            GamePingInfo("PUBG Mobile (Regional)", "161.202.0.1", null, null, "OFFLINE"),
+            GamePingInfo("CS2 (Europe)", "146.66.155.1", null, null, "OFFLINE")
+        )
+    )
+    val gamePings: StateFlow<List<GamePingInfo>> = _gamePings.asStateFlow()
+
+    private val _selectedPreset = MutableStateFlow(GamePreset.STANDARD)
+    val selectedPreset: StateFlow<GamePreset> = _selectedPreset.asStateFlow()
+
+    val activePreset: StateFlow<GamePreset> = DnsVpnService.activePreset
+
+    fun selectPreset(preset: GamePreset) {
+        _selectedPreset.value = preset
+        if (vpnState.value == VpnState.CONNECTED) {
+            val currentSelected = _selectedProfile.value ?: return
+            val intent = Intent(context, DnsVpnService::class.java).apply {
+                action = DnsVpnService.ACTION_START
+                putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
+                putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
+                putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PRESET, preset.name)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+    }
+
     private val _connectionUptime = MutableStateFlow("00:00:00")
     val connectionUptime: StateFlow<String> = _connectionUptime.asStateFlow()
 
@@ -69,6 +105,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
                 putExtra(DnsVpnService.EXTRA_PROTOCOL, if (enabled) "DoH" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PRESET, selectedPreset.value.name)
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -116,6 +153,70 @@ class DnsViewModel(
                 delay(3000) // update ping every 3 seconds
             }
         }
+
+        // Start background game server latency checking with Jitter
+        viewModelScope.launch {
+            val histories = mapOf(
+                "15.185.0.1" to mutableListOf<Int>(),
+                "161.202.0.1" to mutableListOf<Int>(),
+                "146.66.155.1" to mutableListOf<Int>()
+            )
+            while (true) {
+                val currentList = _gamePings.value.map { game ->
+                    val rtt = pingGameServer(game.ip)
+                    val history = histories[game.ip]
+                    var jitter: Int? = null
+                    if (rtt != null) {
+                        history?.add(rtt)
+                        if (history != null && history.size > 5) {
+                            history.removeAt(0)
+                        }
+                        if (history != null && history.size >= 2) {
+                            var sumDiff = 0
+                            for (i in 0 until history.size - 1) {
+                                sumDiff += kotlin.math.abs(history[i + 1] - history[i])
+                            }
+                            jitter = sumDiff / (history.size - 1)
+                        }
+                    } else {
+                        history?.clear()
+                    }
+
+                    val status = when {
+                        rtt == null -> "OFFLINE"
+                        rtt < 60 -> "OPTIMAL"
+                        rtt < 150 -> "STABLE"
+                        else -> "HIGH PING"
+                    }
+
+                    game.copy(latencyMs = rtt, jitterMs = jitter, status = status)
+                }
+                _gamePings.value = currentList
+                delay(5000) // Ping every 5 seconds
+            }
+        }
+    }
+
+    private suspend fun pingGameServer(ip: String): Int? = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        var socket: java.net.Socket? = null
+        try {
+            socket = java.net.Socket()
+            // We use port 80 since game server hosts respond instantly to socket connections on standard ports
+            socket.connect(java.net.InetSocketAddress(ip, 80), 1000)
+            val rtt = (System.currentTimeMillis() - startTime).toInt()
+            rtt
+        } catch (e: Exception) {
+            if (e is java.net.SocketTimeoutException) {
+                null
+            } else {
+                // Connection refused or reset from host still confirms host is online and routing!
+                val rtt = (System.currentTimeMillis() - startTime).toInt()
+                if (rtt < 1000) rtt else null
+            }
+        } finally {
+            try { socket?.close() } catch (e: Exception) {}
+        }
     }
 
     fun selectProfile(profile: DnsProfile) {
@@ -131,6 +232,7 @@ class DnsViewModel(
                     putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, profile.secondaryDns)
                     putExtra(DnsVpnService.EXTRA_PROFILE_NAME, profile.name)
                     putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                    putExtra(DnsVpnService.EXTRA_PRESET, selectedPreset.value.name)
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -150,6 +252,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
                 putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PRESET, selectedPreset.value.name)
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

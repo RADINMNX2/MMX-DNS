@@ -2,6 +2,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -39,8 +40,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.DnsProfile
+import com.example.data.GamePreset
+import com.example.data.GamePingInfo
 import com.example.service.VpnState
 import com.example.ui.components.ParticlesBg
+import com.example.ui.components.ReactorSwitch
+import com.example.ui.components.LiveJitterWaveform
 import kotlin.math.sin
 
 @Composable
@@ -56,11 +61,20 @@ fun DashboardScreen(
     connectionUptime: String,
     isTurboEnabled: Boolean,
     onToggleTurbo: (Boolean) -> Unit,
+    gamePings: List<GamePingInfo>,
+    activePreset: GamePreset,
+    selectedPreset: GamePreset,
+    onSelectPreset: (GamePreset) -> Unit,
     onToggleVpn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isConnected = vpnState == VpnState.CONNECTED
     val isConnecting = vpnState == VpnState.CONNECTING
+
+    val currentJitter = remember(gamePings) {
+        val activePings = gamePings.filter { it.jitterMs != null }
+        if (activePings.isEmpty()) 0 else activePings.mapNotNull { it.jitterMs }.average().toInt()
+    }
 
     // Infinite transitions for neon pulsing and glowing elements
     val infiniteTransition = rememberInfiniteTransition(label = "core_pulse")
@@ -291,254 +305,20 @@ fun DashboardScreen(
                 }
             }
 
-            // --- CENTRAL MULTIDIMENSIONAL POWER CORE CONTROLLER ---
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(vertical = 24.dp)
-                    .size(240.dp)
-            ) {
-                // Orbit Layer 1: Forward Orbit Ring
-                Canvas(
-                    modifier = Modifier
-                        .size(210.dp)
-                        .graphicsLayer { rotationZ = orbitRotation }
-                ) {
-                    val baseOrbitColor = if (isConnected) Color(0xFF00F0FF).copy(alpha = 0.2f) else Color(0x0AFFFFFF)
-                    val arcHighlightColor = if (isConnected) Color(0xFF00FF88).copy(alpha = 0.85f) else Color(0x1A00F0FF)
+            // --- CENTRAL HARDWARE-ACCELERATED REACTOR CORE SWITCH ---
+            ReactorSwitch(
+                isConnected = isConnected,
+                isConnecting = isConnecting,
+                onClick = onToggleVpn,
+                modifier = Modifier.padding(vertical = 12.dp)
+            )
 
-                    // Draw fine dotted background circle
-                    drawCircle(
-                        color = baseOrbitColor,
-                        radius = size.width / 2f,
-                        style = Stroke(
-                            width = 1.dp.toPx(),
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 12f), 0f)
-                        )
-                    )
-
-                    // Highlight arcs
-                    drawArc(
-                        color = arcHighlightColor,
-                        startAngle = 0f,
-                        sweepAngle = 50f,
-                        useCenter = false,
-                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                    drawArc(
-                        color = arcHighlightColor,
-                        startAngle = 180f,
-                        sweepAngle = 40f,
-                        useCenter = false,
-                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                }
-
-                // Orbit Layer 2: Reverse Orbit Ring
-                Canvas(
-                    modifier = Modifier
-                        .size(175.dp)
-                        .graphicsLayer { rotationZ = innerOrbitRotation }
-                ) {
-                    val baseOrbitColor = if (isConnected) Color(0xFF8A2BE2).copy(alpha = 0.15f) else Color(0x05FFFFFF)
-                    val arcHighlightColor = if (isConnected) Color(0xFF8A2BE2).copy(alpha = 0.75f) else Color(0x0D8A2BE2)
-
-                    drawCircle(
-                        color = baseOrbitColor,
-                        radius = size.width / 2f,
-                        style = Stroke(
-                            width = 1.dp.toPx(),
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 10f), 0f)
-                        )
-                    )
-
-                    drawArc(
-                        color = arcHighlightColor,
-                        startAngle = 90f,
-                        sweepAngle = 35f,
-                        useCenter = false,
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                    drawArc(
-                        color = arcHighlightColor,
-                        startAngle = 270f,
-                        sweepAngle = 35f,
-                        useCenter = false,
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                }
-
-                // Breathing Glow Background Aura
-                val auraGlowColor by animateColorAsState(
-                    targetValue = when {
-                        isConnected -> Color(0xFF00F0FF)
-                        isConnecting -> Color(0xFFFFCC00)
-                        else -> Color(0x05FFFFFF)
-                    },
-                    animationSpec = tween(800), label = "aura_color"
-                )
-
-                Box(
-                    modifier = Modifier
-                        .size(150.dp)
-                        .graphicsLayer {
-                            scaleX = breathingGlowScale
-                            scaleY = breathingGlowScale
-                        }
-                        .shadow(
-                            elevation = if (isConnected) 44.dp else 0.dp,
-                            shape = CircleShape,
-                            clip = false,
-                            ambientColor = auraGlowColor,
-                            spotColor = auraGlowColor
-                        )
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    auraGlowColor.copy(alpha = if (isConnected) breathingOpacity * 0.35f else 0.05f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
-                )
-
-                // Central Interactive Tactile Reactor Switch
-                val switchCoreColor by animateColorAsState(
-                    targetValue = when {
-                        isConnected -> Color(0xFF04060A)
-                        isConnecting -> Color(0xFF0F0F05)
-                        else -> Color(0xFF0A0C14)
-                    },
-                    animationSpec = tween(600), label = "switch_core"
-                )
-
-                val switchRingColor by animateColorAsState(
-                    targetValue = when {
-                        isConnected -> Color(0xFF00FF88)
-                        isConnecting -> Color(0xFFFFCC00)
-                        else -> Color(0xFF1E283F)
-                    },
-                    animationSpec = tween(600), label = "switch_ring"
-                )
-
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(130.dp)
-                        .border(
-                            BorderStroke(
-                                2.dp,
-                                Brush.linearGradient(
-                                    colors = listOf(switchRingColor, switchRingColor.copy(alpha = 0.3f))
-                                )
-                            ),
-                            CircleShape
-                        )
-                        .background(switchCoreColor, CircleShape)
-                        .clip(CircleShape)
-                        .clickable { onToggleVpn() }
-                ) {
-                    val pressScale by animateFloatAsState(
-                        targetValue = if (isConnecting) 0.92f else if (isConnected) 1.05f else 1.0f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        label = "press_scale"
-                    )
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .graphicsLayer {
-                                scaleX = pressScale
-                                scaleY = pressScale
-                            }
-                            .testTag("vpn_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PowerSettingsNew,
-                            contentDescription = "VPN Switch Key",
-                            tint = switchRingColor,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isConnected) "ACTIVE" else if (isConnecting) "LINKING" else "TAP CORE",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = switchRingColor.copy(alpha = 0.95f),
-                            letterSpacing = 1.5.sp
-                        )
-                    }
-                }
-            }
-
-            // --- LATENCY OSCILLATION WAVE PATH ---
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .background(Color(0x33070A14), RoundedCornerShape(18.dp))
-                    .border(1.dp, Color(0x0DFFFFFF), RoundedCornerShape(18.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val width = size.width
-                    val height = size.height
-                    val midY = height / 2f
-                    val pathPrimary = Path()
-                    val pathSecondary = Path()
-
-                    pathPrimary.moveTo(0f, midY)
-                    pathSecondary.moveTo(0f, midY)
-
-                    val waveAmplitudePx = waveAmplitude.dp.toPx()
-                    for (x in 0..width.toInt() step 6) {
-                        val relX = x.toFloat() / width
-                        // Primary Oscillating Sine Path
-                        val y1 = midY + waveAmplitudePx * sin(wavePhase + (relX * waveFrequency * 2 * Math.PI.toFloat()))
-                        // Out-of-phase secondary trail for a cybernetic overlap look
-                        val y2 = midY + (waveAmplitudePx * 0.5f) * sin(wavePhase + Math.PI.toFloat() + (relX * (waveFrequency * 1.4f) * 2 * Math.PI.toFloat()))
-
-                        pathPrimary.lineTo(relX * width, y1)
-                        pathSecondary.lineTo(relX * width, y2)
-                    }
-
-                    // Draw primary gradient path
-                    drawPath(
-                        path = pathPrimary,
-                        brush = Brush.horizontalGradient(
-                            colors = waveColors,
-                            startX = 0f,
-                            endX = width
-                        ),
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                    )
-
-                    // Draw complementary path if connected
-                    if (isConnected) {
-                        drawPath(
-                            path = pathSecondary,
-                            color = Color(0xFF8A2BE2).copy(alpha = 0.35f),
-                            style = Stroke(width = 1.2.dp.toPx(), cap = StrokeCap.Round)
-                        )
-                    }
-                }
-
-                Text(
-                    text = if (isConnected) "MNX WAVE ACTIVE" else "RESOLVER STANDBY",
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isConnected) Color(0xFF00F0FF).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.2f),
-                    letterSpacing = 2.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(end = 12.dp, top = 6.dp)
-                )
-            }
+            // --- LIVE JITTER STABILITY OSCILLOSCOPE WAVEFORM ---
+            LiveJitterWaveform(
+                jitterMs = currentJitter,
+                isConnected = isConnected,
+                modifier = Modifier.padding(vertical = 10.dp)
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -589,13 +369,24 @@ fun DashboardScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = String.format("%,d", totalQueriesResolved),
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color.White,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            AnimatedContent(
+                                targetState = totalQueriesResolved,
+                                transitionSpec = {
+                                    (slideInVertically { height -> height } + fadeIn() togetherWith
+                                     slideOutVertically { height -> -height } + fadeOut())
+                                        .using(SizeTransform(clip = false))
+                                },
+                                label = "query_counter_anim"
+                            ) { targetCount ->
+                                Text(
+                                    text = String.format("%,d", targetCount),
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFF00FF88), // Holographic glowing neon green
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.testTag("holographic_query_counter")
+                                )
+                            }
                             Text(
                                 text = "DNS queries filtered",
                                 fontSize = 9.sp,
@@ -827,6 +618,157 @@ fun DashboardScreen(
                             ),
                             modifier = Modifier.testTag("turbo_switch")
                         )
+                    }
+                }
+
+                // --- GAME PRESETS CONTROLLER PANEL ---
+                Text(
+                    text = "GAME PROFILE PRESETS",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00F0FF).copy(alpha = 0.85f),
+                    letterSpacing = 3.sp,
+                    modifier = Modifier.padding(top = 10.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val presetsList = listOf(
+                        Triple(GamePreset.STANDARD, "Standard", "Default DNS"),
+                        Triple(GamePreset.FPS_SHOOTER, "FPS / Shooter", "Low-jitter DoT"),
+                        Triple(GamePreset.MMO_RPG, "MMO / RPG", "Stable Buffers"),
+                        Triple(GamePreset.DOWNLOAD_UPDATE, "Download", "Max Bandwidth")
+                    )
+
+                    presetsList.forEach { (preset, label, subtitle) ->
+                        val isSelected = selectedPreset == preset
+                        val isActiveInTunnel = activePreset == preset && isConnected
+
+                        val borderColor = when {
+                            isActiveInTunnel -> Color(0xFF00FF88)
+                            isSelected -> Color(0xFF00F0FF)
+                            else -> Color.White.copy(alpha = 0.15f)
+                        }
+
+                        val bgColor = when {
+                            isActiveInTunnel -> Color(0x1F00FF88)
+                            isSelected -> Color(0x1500F0FF)
+                            else -> Color(0x22080C16)
+                        }
+
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onSelectPreset(preset) }
+                                .testTag("preset_${preset.name.lowercase()}"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = bgColor),
+                            border = BorderStroke(1.dp, borderColor)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected || isActiveInTunnel) Color.White else Color.White.copy(alpha = 0.6f),
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 8.sp,
+                                    color = if (isActiveInTunnel) Color(0xFF00FF88) else if (isSelected) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.4f),
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // --- GAME SERVER LATENCY CARD PANEL ---
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x88080C16)),
+                    border = BorderStroke(1.dp, Color(0x1EFFFFFF))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp)
+                    ) {
+                        Text(
+                            text = "REAL-WORLD GAME LATENCY",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.4f),
+                            letterSpacing = 1.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        gamePings.forEach { game ->
+                            val statusColor = when (game.status) {
+                                "OPTIMAL" -> Color(0xFF00FF88)
+                                "STABLE" -> Color(0xFF00F0FF)
+                                "HIGH PING" -> Color(0xFFFF9900)
+                                else -> Color(0xFF4C5D7E)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .background(statusColor, CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = game.name,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "IP: ${game.ip}",
+                                            fontSize = 9.sp,
+                                            color = Color.White.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = if (game.latencyMs == null) "OFFLINE" else "${game.latencyMs} ms",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = statusColor,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        if (game.jitterMs != null) {
+                                            Text(
+                                                text = "Jitter: ${game.jitterMs} ms",
+                                                fontSize = 9.sp,
+                                                color = Color.White.copy(alpha = 0.5f),
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

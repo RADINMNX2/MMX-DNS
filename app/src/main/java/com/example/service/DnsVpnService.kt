@@ -5,11 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.Context
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.example.MainActivity
+import com.example.data.GamePreset
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -82,9 +84,13 @@ class DnsVpnService : VpnService() {
         const val EXTRA_SECONDARY_DNS = "secondary_dns"
         const val EXTRA_PROFILE_NAME = "profile_name"
         const val EXTRA_PROTOCOL = "protocol" // Values: "DoH", "DoT", "UDP"
+        const val EXTRA_PRESET = "game_preset" // Values: "STANDARD", "FPS_SHOOTER", "MMO_RPG", "DOWNLOAD_UPDATE"
 
         private val _state = MutableStateFlow(VpnState.DISCONNECTED)
         val state: StateFlow<VpnState> = _state.asStateFlow()
+
+        private val _activePreset = MutableStateFlow(GamePreset.STANDARD)
+        val activePreset: StateFlow<GamePreset> = _activePreset.asStateFlow()
 
         private val _activeProfileName = MutableStateFlow("None")
         val activeProfileName: StateFlow<String> = _activeProfileName.asStateFlow()
@@ -136,35 +142,43 @@ class DnsVpnService : VpnService() {
 
     // Custom SocketFactory to automatically call protect() on every Socket created by OkHttp
     private inner class ProtectedSocketFactory : SocketFactory() {
-        private val delegate = getDefault()
-
         override fun createSocket(): Socket {
-            val socket = delegate.createSocket()
+            val socket = Socket()
             protect(socket)
             return socket
         }
 
         override fun createSocket(host: String?, port: Int): Socket {
-            val socket = delegate.createSocket(host, port)
+            val socket = Socket()
             protect(socket)
+            socket.connect(InetSocketAddress(host, port))
             return socket
         }
 
         override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket {
-            val socket = delegate.createSocket(host, port, localHost, localPort)
+            val socket = Socket()
             protect(socket)
+            if (localHost != null) {
+                socket.bind(InetSocketAddress(localHost, 0))
+            }
+            socket.connect(InetSocketAddress(host, port))
             return socket
         }
 
         override fun createSocket(address: InetAddress?, port: Int): Socket {
-            val socket = delegate.createSocket(address, port)
+            val socket = Socket()
             protect(socket)
+            socket.connect(InetSocketAddress(address, port))
             return socket
         }
 
         override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket {
-            val socket = delegate.createSocket(address, port, localAddress, localPort)
+            val socket = Socket()
             protect(socket)
+            if (localAddress != null) {
+                socket.bind(InetSocketAddress(localAddress, 0))
+            }
+            socket.connect(InetSocketAddress(address, port))
             return socket
         }
     }
@@ -238,7 +252,8 @@ class DnsVpnService : VpnService() {
             val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: "8.8.4.4"
             val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Custom"
             val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "UDP"
-            startVpn(primary, secondary, name, protocol)
+            val preset = intent.getStringExtra(EXTRA_PRESET) ?: "STANDARD"
+            startVpn(primary, secondary, name, protocol, preset)
         }
         return START_STICKY
     }
@@ -248,30 +263,54 @@ class DnsVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun startVpn(primaryDns: String, secondaryDns: String, profileName: String, protocol: String) {
+    private fun startVpn(primaryDns: String, secondaryDns: String, profileName: String, protocol: String, presetStr: String) {
         if (isRunning) {
             stopVpn()
         }
 
+        val preset = try { GamePreset.valueOf(presetStr) } catch(e: Exception) { GamePreset.STANDARD }
+        _activePreset.value = preset
+
+        var activeProto = protocol
+        var primary = primaryDns
+        var secondary = secondaryDns
+        var displayProfileName = profileName
+
+        if (preset == GamePreset.FPS_SHOOTER) {
+            activeProto = "DoT"
+            log(LogType.INFO, "PRESET", "FPS/Shooter Preset Active: Forced DoT protocol & tiny MTU buffers (2048) for minimum jitter.")
+        } else if (preset == GamePreset.MMO_RPG) {
+            log(LogType.INFO, "PRESET", "MMO/RPG Preset Active: Stability optimized buffer (16384) to eliminate packet loss.")
+        } else if (preset == GamePreset.DOWNLOAD_UPDATE) {
+            primary = "1.1.1.1"
+            secondary = "8.8.8.8"
+            activeProto = "UDP"
+            displayProfileName = "Download Core"
+            log(LogType.INFO, "PRESET", "Download/Update Preset Active: Switched to Cloudflare/Google UDP with heavy buffers (65535).")
+        }
+
         _state.value = VpnState.CONNECTING
-        _activeProfileName.value = profileName
-        _activePrimaryDns.value = primaryDns
-        _activeSecondaryDns.value = secondaryDns
+        _activeProfileName.value = displayProfileName
+        _activePrimaryDns.value = primary
+        _activeSecondaryDns.value = secondary
         _totalQueriesResolved.value = 0
 
         log(LogType.INFO, "ENGINE", "Initializing DNS Changer Engine...")
-        log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns)")
-        log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
+        log(LogType.INFO, "PROFILE", "Active Profile: $displayProfileName (Primary: $primary, Secondary: $secondary)")
+        log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $activeProto")
 
-        val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
+        val notification = createNotification(displayProfileName, "$primary | $secondary [$activeProto]")
         startForeground(NOTIFICATION_ID, notification)
 
         isRunning = true
         serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+        // Start the background Kotlin Coroutines Failover Monitor
+        startFailoverMonitor(displayProfileName, activeProto)
+
         workerThread = thread(start = true, name = "DNS-VPN-Worker") {
             try {
-                runVpnTunnel(primaryDns, secondaryDns, protocol)
+                runVpnTunnel(primary, secondary, activeProto)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in VPN tunnel thread", e)
                 log(LogType.ERROR, "ENGINE", "Critical error in worker thread: ${e.message}")
@@ -280,6 +319,75 @@ class DnsVpnService : VpnService() {
                 stopSelf()
             }
         }
+    }
+
+    private fun startFailoverMonitor(profileName: String, protocol: String) {
+        serviceScope.launch {
+            var consecutiveFailures = 0
+            while (isRunning) {
+                delay(30000) // Test active Primary DNS every 30 seconds
+                if (!isRunning) break
+
+                val currentPrimary = _activePrimaryDns.value
+                val currentSecondary = _activeSecondaryDns.value
+
+                if (currentPrimary.isEmpty()) continue
+
+                log(LogType.INFO, "MONITOR", "Running background UDP diagnostic on Primary DNS ($currentPrimary)...")
+
+                val isAlive = testDnsServer(currentPrimary)
+                if (isAlive) {
+                    consecutiveFailures = 0
+                    log(LogType.SUCCESS, "MONITOR", "Primary DNS ($currentPrimary) is healthy.")
+                } else {
+                    consecutiveFailures++
+                    log(LogType.WARNING, "MONITOR", "Primary DNS ($currentPrimary) failed UDP diagnostic (Failure $consecutiveFailures/2)")
+
+                    if (consecutiveFailures >= 2) {
+                        if (currentSecondary.isNotEmpty() && currentSecondary != currentPrimary) {
+                            // Engage hot-swap!
+                            _activePrimaryDns.value = currentSecondary
+                            _activeSecondaryDns.value = currentPrimary
+
+                            log(LogType.ERROR, "FAILOVER", "Primary DNS ($currentPrimary) failed twice consecutively. Zero-Loss Hot-Swap Engaged! Secondary ($currentSecondary) is now the active Primary DNS.")
+
+                            // Live update notification without restarting tunnel
+                            updateNotification(profileName, currentSecondary, currentPrimary, protocol)
+
+                            consecutiveFailures = 0
+                        } else {
+                            log(LogType.ERROR, "FAILOVER", "Primary DNS ($currentPrimary) failed twice, but no secondary DNS is configured for hot-swap failover!")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun testDnsServer(dnsIp: String): Boolean {
+        // Standard DNS query for google.com (A record)
+        val googleDnsQuery = byteArrayOf(
+            0x24, 0x1a, // Transaction ID
+            0x01, 0x00, // Flags: Standard query
+            0x00, 0x01, // Questions: 1
+            0x00, 0x00, // Answer RRs: 0
+            0x00, 0x00, // Authority RRs: 0
+            0x00, 0x00, // Additional RRs: 0
+            // Query: google.com
+            0x06, 0x67, 0x6f, 0x67, 0x6c, 0x65, // google (6 bytes)
+            0x03, 0x63, 0x6f, 0x6d,             // com (3 bytes)
+            0x00,                               // null terminator
+            0x00, 0x01,                         // Type: A
+            0x00, 0x01                          // Class: IN
+        )
+        val response = resolveViaUdp(googleDnsQuery, dnsIp)
+        return response != null && response.isNotEmpty()
+    }
+
+    private fun updateNotification(profileName: String, primaryDns: String, secondaryDns: String, protocol: String) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
     private fun stopVpn() {
@@ -358,7 +466,13 @@ class DnsVpnService : VpnService() {
         val input = FileInputStream(fileDescriptor)
         val output = FileOutputStream(fileDescriptor)
 
-        val packetBuffer = ByteBuffer.allocate(32767)
+        val bufferSize = when (_activePreset.value) {
+            GamePreset.FPS_SHOOTER -> 2048
+            GamePreset.MMO_RPG -> 16384
+            GamePreset.DOWNLOAD_UPDATE -> 65535
+            GamePreset.STANDARD -> 32767
+        }
+        val packetBuffer = ByteBuffer.allocate(bufferSize)
 
         while (isRunning) {
             try {
@@ -417,8 +531,8 @@ class DnsVpnService : VpnService() {
                                     srcPort,
                                     dstPort,
                                     output,
-                                    primaryDns,
-                                    secondaryDns,
+                                    _activePrimaryDns.value,
+                                    _activeSecondaryDns.value,
                                     protocol
                                 )
                             }
