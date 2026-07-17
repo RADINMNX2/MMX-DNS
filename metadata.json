@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "MNX DNS",
+  "description": "Multi-protocol, dual-stack high-fidelity custom DNS routing engine and gaming split-tunnel shield.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
