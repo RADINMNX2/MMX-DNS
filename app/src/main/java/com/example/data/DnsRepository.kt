@@ -2,16 +2,28 @@ package com.example.data
 
 import kotlinx.coroutines.flow.Flow
 
-class DnsRepository(private val dao: DnsProfileDao) {
-    val allProfiles: Flow<List<DnsProfile>> = dao.getAllProfiles()
+class DnsRepository(
+    private val profileDao: DnsProfileDao,
+    private val gamingAppDao: GamingAppDao
+) {
+    val allProfiles: Flow<List<DnsProfile>> = profileDao.getAllProfiles()
 
-    suspend fun getDefaultProfile(): DnsProfile? = dao.getDefaultProfile()
+    suspend fun getDefaultProfile(): DnsProfile? = profileDao.getDefaultProfile()
 
-    suspend fun insertProfile(profile: DnsProfile): Long = dao.insertProfile(profile)
+    suspend fun insertProfile(profile: DnsProfile): Long = profileDao.insertProfile(profile)
 
-    suspend fun updateProfile(profile: DnsProfile) = dao.updateProfile(profile)
+    suspend fun updateProfile(profile: DnsProfile) = profileDao.updateProfile(profile)
 
-    suspend fun deleteProfile(profile: DnsProfile) = dao.deleteProfile(profile)
+    suspend fun deleteProfile(profile: DnsProfile) = profileDao.deleteProfile(profile)
 
-    suspend fun setDefaultProfile(profileId: Int) = dao.setDefaultProfile(profileId)
+    suspend fun setDefaultProfile(profileId: Int) = profileDao.setDefaultProfile(profileId)
+
+    // Gaming Apps
+    val allGamingApps: Flow<List<GamingApp>> = gamingAppDao.getAllApps()
+
+    suspend fun getSelectedGamingApps(): List<GamingApp> = gamingAppDao.getSelectedApps()
+
+    suspend fun updateGamingApp(app: GamingApp) = gamingAppDao.updateApp(app)
+
+    suspend fun setGamingAppSelected(packageName: String, selected: Boolean) = gamingAppDao.setAppSelected(packageName, selected)
 }

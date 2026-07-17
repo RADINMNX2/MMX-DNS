@@ -32,6 +32,15 @@ class DnsViewModel(
     val allProfiles: StateFlow<List<DnsProfile>> = repository.allProfiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allGamingApps: StateFlow<List<com.example.data.GamingApp>> = repository.allGamingApps
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun toggleGamingAppSelection(packageName: String, isSelected: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setGamingAppSelected(packageName, isSelected)
+        }
+    }
+
     val vpnState: StateFlow<VpnState> = DnsVpnService.state
     val activeProfileName: StateFlow<String> = DnsVpnService.activeProfileName
     val activePrimaryDns: StateFlow<String> = DnsVpnService.activePrimaryDns
@@ -68,7 +77,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (enabled) "DoH" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (enabled) "DoQ" else "UDP")
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -130,7 +139,7 @@ class DnsViewModel(
                     putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, profile.primaryDns)
                     putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, profile.secondaryDns)
                     putExtra(DnsVpnService.EXTRA_PROFILE_NAME, profile.name)
-                    putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                    putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -149,7 +158,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

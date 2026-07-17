@@ -9,9 +9,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [DnsProfile::class], version = 1, exportSchema = false)
+@Database(entities = [DnsProfile::class, GamingApp::class], version = 2, exportSchema = false)
 abstract class DnsDatabase : RoomDatabase() {
     abstract fun dnsProfileDao(): DnsProfileDao
+    abstract fun gamingAppDao(): GamingAppDao
 
     companion object {
         @Volatile
@@ -24,12 +25,14 @@ abstract class DnsDatabase : RoomDatabase() {
                     DnsDatabase::class.java,
                     "dns_changer_database"
                 )
+                .fallbackToDestructiveMigration()
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         // Seed database on background thread
                         CoroutineScope(Dispatchers.IO).launch {
-                            val dao = getDatabase(context).dnsProfileDao()
+                            val dbInstance = getDatabase(context)
+                            val dao = dbInstance.dnsProfileDao()
                             dao.insertProfile(
                                 DnsProfile(
                                     name = "Google Public DNS",
@@ -64,6 +67,23 @@ abstract class DnsDatabase : RoomDatabase() {
                                     secondaryDns = "149.112.112.112",
                                     isDefault = false,
                                     isCustom = false
+                                )
+                            )
+
+                            // Seed popular e-sports and matchmaking gaming endpoints
+                            val gamingDao = dbInstance.gamingAppDao()
+                            gamingDao.insertApps(
+                                listOf(
+                                    GamingApp("com.activision.callofduty.shooter", "Call of Duty: Mobile", true),
+                                    GamingApp("com.tencent.ig", "PUBG MOBILE", true),
+                                    GamingApp("com.dts.freefireth", "Free Fire", false),
+                                    GamingApp("com.mobile.legends", "Mobile Legends", false),
+                                    GamingApp("com.riotgames.league.wildrift", "League of Legends: Wild Rift", false),
+                                    GamingApp("com.supercell.brawlstars", "Brawl Stars", false),
+                                    GamingApp("com.supercell.clashofclans", "Clash of Clans", false),
+                                    GamingApp("com.miHoYo.GenshinImpact", "Genshin Impact", false),
+                                    GamingApp("com.roblox.client", "Roblox", false),
+                                    GamingApp("com.mojang.minecraftpe", "Minecraft", false)
                                 )
                             )
                         }

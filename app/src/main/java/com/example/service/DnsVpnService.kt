@@ -225,9 +225,9 @@ class DnsVpnService : VpnService() {
             .socketFactory(ProtectedSocketFactory())
             .sslSocketFactory(permissiveSslContext.socketFactory, trustManager)
             .hostnameVerifier { _, _ -> true } // Trust any hostname for flexible IP-based custom DoH
-            .connectTimeout(1000, TimeUnit.MILLISECONDS)
-            .readTimeout(1000, TimeUnit.MILLISECONDS)
-            .writeTimeout(1000, TimeUnit.MILLISECONDS)
+            .connectTimeout(4000, TimeUnit.MILLISECONDS)
+            .readTimeout(4000, TimeUnit.MILLISECONDS)
+            .writeTimeout(4000, TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -279,7 +279,101 @@ class DnsVpnService : VpnService() {
 
         workerThread = thread(start = true, name = "DNS-VPN-Worker") {
             try {
-                runVpnTunnel(primaryDns, secondaryDns, protocol)
+                val builder = Builder()
+                builder.setSession("Vibrant DNS Changer")
+                
+                // Low-latency gaming MTU configuration to prevent UDP packet fragmentation
+                builder.setMtu(1360)
+                
+                builder.addAddress("10.0.0.2", 32)
+                
+                builder.addDnsServer(primaryDns)
+                if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
+                    builder.addDnsServer(secondaryDns)
+                }
+
+                // Split Tunneling Configuration
+                try {
+                    val db = com.example.data.DnsDatabase.getDatabase(this@DnsVpnService)
+                    val selectedApps = kotlinx.coroutines.runBlocking { db.gamingAppDao().getSelectedApps() }
+                    
+                    var splitTunnelConfigured = false
+                    if (selectedApps.isNotEmpty()) {
+                        for (app in selectedApps) {
+                            try {
+                                builder.addAllowedApplication(app.packageName)
+                                Log.i(TAG, "Split Tunneling: Added allowed app: ${app.packageName}")
+                                splitTunnelConfigured = true
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to add allowed application: ${app.packageName}", e)
+                            }
+                        }
+                    }
+                    
+                    if (splitTunnelConfigured) {
+                        log(LogType.SUCCESS, "TUNNEL", "App-Split Tunneling active! Intercepting DNS only for ${selectedApps.size} game(s).")
+                    } else {
+                        log(LogType.INFO, "TUNNEL", "No apps selected. Operating in full system DNS routing mode.")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to configure App-Split Tunneling", e)
+                }
+
+                try {
+                    builder.addRoute(primaryDns, 32)
+                    if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
+                        builder.addRoute(secondaryDns, 32)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to add specific DNS routes, falling back to routing DNS subnet", e)
+                    try {
+                        builder.addRoute("8.8.8.8", 32)
+                        builder.addRoute("8.8.4.4", 32)
+                        builder.addRoute("1.1.1.1", 32)
+                        builder.addRoute("1.0.0.1", 32)
+                    } catch (ex: Exception) {
+                        Log.e(TAG, "Failed to establish routes", ex)
+                    }
+                }
+
+                val vpnInterfaceLocal = builder.establish()
+                if (vpnInterfaceLocal == null) {
+                    Log.e(TAG, "Failed to establish VPN interface (null)")
+                    _state.value = VpnState.DISCONNECTED
+                    return@thread
+                }
+                vpnInterface = vpnInterfaceLocal
+
+                _state.value = VpnState.CONNECTED
+                Log.i(TAG, "VPN tunnel established successfully. Native active: ${FluxDnsEngine.isNativeAvailable}")
+
+                if (FluxDnsEngine.isNativeAvailable) {
+                    log(LogType.SUCCESS, "ENGINE", "Native JNI engine successfully bound to TUN interface.")
+                    val started = FluxDnsEngine.start(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                    if (started) {
+                        // Start polling native statistics
+                        serviceScope.launch {
+                            while (isRunning) {
+                                delay(1000)
+                                _totalQueriesResolved.value = FluxDnsEngine.getResolvedCount()
+                            }
+                        }
+                        // Keep worker thread alive while VPN is running
+                        while (isRunning) {
+                            try {
+                                Thread.sleep(1000)
+                            } catch (e: InterruptedException) {
+                                break
+                            }
+                        }
+                    } else {
+                        log(LogType.ERROR, "ENGINE", "Failed to start native engine. Invoking JVM fallback...")
+                        runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                    }
+                } else {
+                    log(LogType.INFO, "ENGINE", "Running standard JVM-based packet routing engine.")
+                    runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in VPN tunnel thread", e)
                 log(LogType.ERROR, "ENGINE", "Critical error in worker thread: ${e.message}")
@@ -302,6 +396,10 @@ class DnsVpnService : VpnService() {
 
         log(LogType.WARNING, "ENGINE", "Stopping DNS Changer Engine...")
 
+        if (FluxDnsEngine.isNativeAvailable) {
+            FluxDnsEngine.stop()
+        }
+
         try {
             vpnInterface?.close()
         } catch (e: Exception) {
@@ -321,48 +419,8 @@ class DnsVpnService : VpnService() {
         log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully. Default system DNS restored.")
     }
 
-    private fun runVpnTunnel(primaryDns: String, secondaryDns: String, protocol: String) {
-        val builder = Builder()
-        builder.setSession("Vibrant DNS Changer")
-        
-        // Low-latency gaming MTU configuration to prevent UDP packet fragmentation
-        builder.setMtu(1360)
-        
-        builder.addAddress("10.0.0.2", 32)
-        
-        builder.addDnsServer(primaryDns)
-        if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-            builder.addDnsServer(secondaryDns)
-        }
-
-        try {
-            builder.addRoute(primaryDns, 32)
-            if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-                builder.addRoute(secondaryDns, 32)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add specific DNS routes, falling back to routing DNS subnet", e)
-            try {
-                builder.addRoute("8.8.8.8", 32)
-                builder.addRoute("8.8.4.4", 32)
-                builder.addRoute("1.1.1.1", 32)
-                builder.addRoute("1.0.0.1", 32)
-            } catch (ex: Exception) {
-                Log.e(TAG, "Failed to establish routes", ex)
-            }
-        }
-
-        vpnInterface = builder.establish()
-        if (vpnInterface == null) {
-            Log.e(TAG, "Failed to establish VPN interface (null)")
-            _state.value = VpnState.DISCONNECTED
-            return
-        }
-
-        _state.value = VpnState.CONNECTED
-        Log.i(TAG, "VPN tunnel established successfully with protocol: $protocol")
-
-        val fileDescriptor = vpnInterface!!.fileDescriptor
+    private fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
+        val fileDescriptor = vpnInterface.fileDescriptor
         val input = FileInputStream(fileDescriptor)
         val output = FileOutputStream(fileDescriptor)
 
@@ -493,6 +551,10 @@ class DnsVpnService : VpnService() {
                 response = when (protocol) {
                     "DoH" -> resolveViaDoH(dnsQuery, dnsIp)
                     "DoT" -> resolveViaDoT(dnsQuery, dnsIp)
+                    "DoQ", "DoH3" -> {
+                        log(LogType.WARNING, "RESOLVER", "JVM Fallback does not natively support QUIC/HTTP3 transport. Emulating secure fallback to DoH...")
+                        resolveViaDoH(dnsQuery, dnsIp)
+                    }
                     else -> resolveViaUdp(dnsQuery, dnsIp)
                 }
                 if (response != null) {
@@ -505,8 +567,8 @@ class DnsVpnService : VpnService() {
             }
         }
 
-        // Silent Fallback to optimized UDP if DoH/DoT fails or times out
-        if (response == null && (protocol == "DoH" || protocol == "DoT")) {
+        // Silent Fallback to optimized UDP if secure protocols fail or time out
+        if (response == null && (protocol == "DoH" || protocol == "DoT" || protocol == "DoQ" || protocol == "DoH3")) {
             log(LogType.WARNING, "FALLBACK", "$protocol failed for $domain. Invoking ultra-low latency UDP fallback...")
             for (dnsIp in dnsServersToTry) {
                 try {
@@ -616,8 +678,8 @@ class DnsVpnService : VpnService() {
             // 1. Establish raw connection on port 853
             socket = Socket()
             protect(socket) // Bypasses the VPN loop
-            socket.soTimeout = 1000
-            socket.connect(InetSocketAddress(dnsIp, 853), 1000)
+            socket.soTimeout = 4000
+            socket.connect(InetSocketAddress(dnsIp, 853), 4000)
 
             // 2. Wrap socket in SSL/TLS layer
             val sslFactory = if (host != null) {
@@ -661,7 +723,8 @@ class DnsVpnService : VpnService() {
 
             responseBuf
         } catch (e: Exception) {
-            Log.w(TAG, "DoT query failed on $dnsIp: ${e.message}")
+            Log.w(TAG, "DoT query failed on $dnsIp: ${e.message}", e)
+            log(LogType.ERROR, "RESOLVER", "DoT query failed on $dnsIp: ${e.message ?: e.javaClass.simpleName}")
             null
         } finally {
             try {
@@ -698,7 +761,8 @@ class DnsVpnService : VpnService() {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "DoH query failed on $dnsIp: ${e.message}")
+            Log.w(TAG, "DoH query failed on $dnsIp: ${e.message}", e)
+            log(LogType.ERROR, "RESOLVER", "DoH query failed on $dnsIp: ${e.message ?: e.javaClass.simpleName}")
             null
         }
     }

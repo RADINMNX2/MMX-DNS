@@ -23,7 +23,8 @@ class MainActivity : ComponentActivity() {
         // Initialize Room Database, DAO and Repository
         val database = DnsDatabase.getDatabase(this)
         val dao = database.dnsProfileDao()
-        val repository = DnsRepository(dao)
+        val gamingAppDao = database.gamingAppDao()
+        val repository = DnsRepository(dao, gamingAppDao)
         
         // Setup ViewModel
         val factory = DnsViewModelFactory(application, repository)

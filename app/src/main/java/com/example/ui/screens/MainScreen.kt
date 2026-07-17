@@ -51,6 +51,7 @@ fun MainScreen(
     val pingMs by viewModel.pingResult.collectAsStateWithLifecycle()
     val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
     val profiles by viewModel.allProfiles.collectAsStateWithLifecycle()
+    val gamingApps by viewModel.allGamingApps.collectAsStateWithLifecycle()
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isTurboEnabled by viewModel.isTurboEnabled.collectAsStateWithLifecycle()
@@ -208,6 +209,10 @@ fun MainScreen(
                             } else {
                                 viewModel.toggleVpn()
                             }
+                        },
+                        gamingApps = gamingApps,
+                        onToggleGamingApp = { packageName, isSelected ->
+                            viewModel.toggleGamingAppSelection(packageName, isSelected)
                         }
                     )
                 }
