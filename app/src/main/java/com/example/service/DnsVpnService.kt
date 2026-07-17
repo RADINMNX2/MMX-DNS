@@ -231,6 +231,8 @@ class DnsVpnService : VpnService() {
             .build()
     }
 
+    private val cronetDohResolver by lazy { CronetDohResolver(applicationContext) }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -535,52 +537,64 @@ class DnsVpnService : VpnService() {
         protocol: String
     ) {
         val domain = parseDnsQueryName(dnsQuery)
-        val dnsServersToTry = mutableListOf<String>()
-        dnsServersToTry.add(primaryDns)
-        if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-            dnsServersToTry.add(secondaryDns)
-        }
-
-        log(LogType.INFO, "QUERY", "Requested: $domain via $protocol")
+        log(LogType.INFO, "QUERY", "Requested: $domain via 3-Tier Loop")
 
         var response: ByteArray? = null
 
-        // Attempt selected secure protocol
-        for (dnsIp in dnsServersToTry) {
+        // --- Tier 1 (Native Primary) ---
+        if (FluxDnsEngine.isNativeAvailable) {
+            log(LogType.INFO, "RESOLVER", "Tier 1: Querying Native Rust JNI Engine via DoQ...")
             try {
-                response = when (protocol) {
-                    "DoH" -> resolveViaDoH(dnsQuery, dnsIp)
-                    "DoT" -> resolveViaDoT(dnsQuery, dnsIp)
-                    "DoQ", "DoH3" -> {
-                        log(LogType.WARNING, "RESOLVER", "JVM Fallback does not natively support QUIC/HTTP3 transport. Emulating secure fallback to DoH...")
-                        resolveViaDoH(dnsQuery, dnsIp)
-                    }
-                    else -> resolveViaUdp(dnsQuery, dnsIp)
+                response = withTimeoutOrNull(2000) {
+                    FluxDnsEngine.resolveQuery(dnsQuery, primaryDns, secondaryDns, "DoQ")
                 }
                 if (response != null) {
-                    log(LogType.SUCCESS, "RESOLVED", "Resolved $domain via $protocol ($dnsIp) successfully (${response.size} bytes)")
-                    break
+                    log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved $domain via Native Rust JNI Engine.")
+                } else {
+                    log(LogType.WARNING, "RESOLVER", "Tier 1: Native JNI Engine returned empty response or timed out.")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to resolve via $protocol on $dnsIp, trying next...", e)
-                log(LogType.WARNING, "RESOLVER", "Attempt failed for $domain via $protocol on $dnsIp: ${e.message}")
+                Log.w(TAG, "Tier 1 resolve failed: ${e.message}")
+            }
+        } else {
+            log(LogType.WARNING, "RESOLVER", "Tier 1: Native JNI Engine is unavailable. Falling back to Tier 2.")
+        }
+
+        // --- Tier 2 (JVM Fallback - Modern) ---
+        if (response == null) {
+            log(LogType.INFO, "RESOLVER", "Tier 2: Invoking high-performance Kotlin Cronet HTTP/3 (DoH3) resolver...")
+            try {
+                response = withTimeoutOrNull(3000) {
+                    resolveViaDoH3(dnsQuery, primaryDns)
+                }
+                if (response == null && secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
+                    response = withTimeoutOrNull(3000) {
+                        resolveViaDoH3(dnsQuery, secondaryDns)
+                    }
+                }
+                
+                if (response != null) {
+                    log(LogType.SUCCESS, "RESOLVED", "Tier 2: Resolved $domain via Kotlin Cronet HTTP/3 (DoH3) resolver.")
+                } else {
+                    log(LogType.WARNING, "RESOLVER", "Tier 2: Kotlin Cronet HTTP/3 resolver failed. Falling back to Tier 3.")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Tier 2 resolve failed: ${e.message}")
             }
         }
 
-        // Silent Fallback to optimized UDP if secure protocols fail or time out
-        if (response == null && (protocol == "DoH" || protocol == "DoT" || protocol == "DoQ" || protocol == "DoH3")) {
-            log(LogType.WARNING, "FALLBACK", "$protocol failed for $domain. Invoking ultra-low latency UDP fallback...")
-            for (dnsIp in dnsServersToTry) {
-                try {
-                    response = resolveViaUdp(dnsQuery, dnsIp)
-                    if (response != null) {
-                        log(LogType.SUCCESS, "RESOLVED", "Resolved $domain via fallback UDP ($dnsIp) successfully (${response.size} bytes)")
-                        break
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "UDP fallback failed on $dnsIp", e)
-                    log(LogType.ERROR, "RESOLVER", "UDP fallback failed on $dnsIp: ${e.message}")
+        // --- Tier 3 (Parallel Fast-UDP Race) ---
+        if (response == null) {
+            log(LogType.WARNING, "FALLBACK", "Tier 2 failed. Tier 3: Invoking Parallel Fast-UDP Racing across Anycast IPs...")
+            try {
+                response = raceUdpQueries(dnsQuery, primaryDns, secondaryDns)
+                if (response != null) {
+                    log(LogType.SUCCESS, "RESOLVED", "Tier 3: Resolved $domain via Parallel Fast-UDP Racing.")
+                } else {
+                    log(LogType.ERROR, "RESOLVER", "Tier 3: Parallel Fast-UDP Racing failed to resolve query.")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Tier 3 Parallel Racing failed: ${e.message}")
             }
         }
 
@@ -633,6 +647,35 @@ class DnsVpnService : VpnService() {
         } else {
             log(LogType.ERROR, "RESOLVER", "Failed to resolve $domain on all configured DNS servers!")
         }
+    }
+
+    private suspend fun raceUdpQueries(dnsQuery: ByteArray, primaryDns: String, secondaryDns: String): ByteArray? = coroutineScope {
+        val ips = mutableSetOf("8.8.8.8", "1.1.1.1", "9.9.9.9")
+        if (primaryDns.isNotEmpty()) ips.add(primaryDns)
+        if (secondaryDns.isNotEmpty()) ips.add(secondaryDns)
+        
+        val targetIps = ips.take(3).toList()
+        Log.i(TAG, "Initiating Parallel DNS Racing across Anycast IPs: $targetIps")
+        
+        val channel = kotlinx.coroutines.channels.Channel<ByteArray>(1)
+        val jobs = targetIps.map { ip ->
+            launch(Dispatchers.IO) {
+                try {
+                    val res = resolveViaUdp(dnsQuery, ip)
+                    if (res != null) {
+                        channel.trySend(res)
+                    }
+                } catch (e: Exception) {
+                    // Ignore and let other racers complete
+                }
+            }
+        }
+        
+        val result = withTimeoutOrNull(1500) {
+            channel.receive()
+        }
+        jobs.forEach { it.cancel() }
+        result
     }
 
     private suspend fun resolveViaUdp(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
@@ -763,6 +806,18 @@ class DnsVpnService : VpnService() {
         } catch (e: Exception) {
             Log.w(TAG, "DoH query failed on $dnsIp: ${e.message}", e)
             log(LogType.ERROR, "RESOLVER", "DoH query failed on $dnsIp: ${e.message ?: e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    private suspend fun resolveViaDoH3(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val config = SECURE_DNS_REGISTRY[dnsIp]
+            val dohUrl = config?.dohUrl ?: "https://$dnsIp/dns-query"
+            cronetDohResolver.resolveQuery(dnsQuery, dohUrl)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cronet DoH3 query failed on $dnsIp: ${e.message}", e)
+            log(LogType.ERROR, "RESOLVER", "Cronet DoH3 query failed on $dnsIp: ${e.message ?: e.javaClass.simpleName}")
             null
         }
     }

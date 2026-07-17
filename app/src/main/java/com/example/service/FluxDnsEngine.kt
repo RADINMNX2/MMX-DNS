@@ -14,13 +14,12 @@ object FluxDnsEngine {
         private set
 
     init {
-        try {
-            System.loadLibrary("fluxdns")
-            isNativeAvailable = true
-            Log.i(TAG, "FluxDNS Native Engine library loaded successfully.")
-        } catch (e: UnsatisfiedLinkError) {
-            isNativeAvailable = false
-            Log.e(TAG, "Failed to load native FluxDNS library: ${e.message}. Active fallback to Kotlin loop is enabled.")
+        // Accessing NativeEngine triggers library loading with complete diagnostics
+        isNativeAvailable = NativeEngine.isReady()
+        if (isNativeAvailable) {
+            Log.i(TAG, "FluxDNS Native Engine initialized successfully via NativeEngine loader bridge.")
+        } else {
+            Log.e(TAG, "FluxDNS Native Engine failed to load native libraries. Dynamic fallback to Kotlin is active.")
         }
     }
 
@@ -110,4 +109,21 @@ object FluxDnsEngine {
     ): Boolean
 
     private external fun getQueriesResolved(): Int
+
+    fun resolveQuery(query: ByteArray, primaryDns: String, secondaryDns: String, protocol: String): ByteArray? {
+        if (!isNativeAvailable) return null
+        return try {
+            resolveQueryNative(query, primaryDns, secondaryDns, protocol)
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in native resolveQuery: ${e.message}", e)
+            null
+        }
+    }
+
+    private external fun resolveQueryNative(
+        query: ByteArray,
+        primaryDns: String,
+        secondaryDns: String,
+        protocol: String
+    ): ByteArray?
 }

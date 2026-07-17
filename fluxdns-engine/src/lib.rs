@@ -186,6 +186,57 @@ pub extern "system" fn Java_com_example_service_FluxDnsEngine_getQueriesResolved
     engine.queries_resolved.load(std::sync::atomic::Ordering::SeqCst) as jint
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_resolveQueryNative(
+    mut env: JNIEnv,
+    _class: JClass,
+    query: jni::sys::jbyteArray,
+    primary_dns: JString,
+    secondary_dns: JString,
+    protocol: JString,
+) -> jni::sys::jbyteArray {
+    let query_bytes: Vec<u8> = match env.convert_byte_array(&query) {
+        Ok(b) => b,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let primary: String = match env.get_string(&primary_dns) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let secondary: String = match env.get_string(&secondary_dns) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let proto: String = match env.get_string(&protocol) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build() {
+            Ok(r) => r,
+            Err(_) => return std::ptr::null_mut(),
+        };
+
+    let resolved = rt.block_on(async {
+        resolver::resolve_query(&query_bytes, &primary, &secondary, &proto).await
+    });
+
+    match resolved {
+        Some(res_vec) => {
+            match env.byte_array_from_slice(&res_vec) {
+                Ok(java_arr) => java_arr.as_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// Asynchronous duplex network I/O loop using non-blocking Tokio AsyncFd to read/write from/to the TUN.
 async fn run_async_loop(
     fd: RawFd,

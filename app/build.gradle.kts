@@ -14,13 +14,17 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.dnschanger.vyhqtr"
+    applicationId = "com.example"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    ndk {
+      abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
+    }
   }
 
   signingConfigs {
@@ -94,8 +98,8 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
-  // implementation(libs.converter.moshi)
-  // implementation(libs.firebase.ai)
+  implementation(libs.converter.moshi)
+  implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -106,14 +110,24 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  // implementation(libs.firebase.appcheck.recaptcha)
+  implementation(libs.firebase.appcheck.recaptcha)
+  compileOnly("org.chromium.net:cronet-api:113.5672.61")
+  compileOnly("org.chromium.net:cronet-common:113.5672.61")
+  implementation(libs.play.services.cronet) {
+      exclude(group = "org.chromium.net", module = "cronet-api")
+      exclude(group = "org.chromium.net", module = "cronet-common")
+  }
+  implementation(libs.cronet.fallback) {
+      exclude(group = "org.chromium.net", module = "cronet-api")
+      exclude(group = "org.chromium.net", module = "cronet-common")
+  }
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  // implementation(libs.logging.interceptor)
-  // implementation(libs.moshi.kotlin)
+  implementation(libs.logging.interceptor)
+  implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  // implementation(libs.retrofit)
+  implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -131,5 +145,5 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  // "ksp"(libs.moshi.kotlin.codegen)
+  "ksp"(libs.moshi.kotlin.codegen)
 }

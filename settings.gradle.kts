@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "MNX DNS"
+rootProject.name = "My Application"
 
 include(":app")

@@ -49,10 +49,19 @@ pub async fn resolve_via_doq(
 ) -> Result<Vec<u8>, DoqError> {
     log::info!("Initiating DoQ resolution for server {}:{}", dns_ip, port);
 
-    // Setup network endpoints
-    let peer_addr: SocketAddr = format!("{}:{}", dns_ip, port)
+    // 1. Resolve bootstrap IPs if available, avoiding Port 53 domain lookup dependency
+    let bootstrap_ips = crate::protocols::bootstrap::resolve_bootstrap_ips(dns_ip);
+    let target_ip = if !bootstrap_ips.is_empty() {
+        log::info!("DoQ Client: Bootstrapping secure DNS domain '{}' directly to Anycast IP: '{}'", dns_ip, bootstrap_ips[0]);
+        bootstrap_ips[0].clone()
+    } else {
+        dns_ip.to_string()
+    };
+
+    // Setup network endpoints with target_ip
+    let peer_addr: SocketAddr = format!("{}:{}", target_ip, port)
         .parse()
-        .map_err(|e| DoqError::EngineError(format!("Invalid DNS IP address: {}", e)))?;
+        .map_err(|e| DoqError::EngineError(format!("Invalid DNS IP address ({}): {}", target_ip, e)))?;
         
     let bind_addr: SocketAddr = if peer_addr.is_ipv6() {
         "[::]:0".parse().unwrap()
@@ -78,6 +87,28 @@ pub async fn resolve_via_doq(
     // Enable 0-RTT Handshake
     config.enable_early_data();
 
+    // Configure DPI bypass heuristics for well-known DNS servers (e.g., NextDNS, AdGuard, Cloudflare, Google)
+    let mut bypass_config = crate::protocols::tls_config::BypassConfig::default();
+    let lower_dns = dns_ip.to_lowercase();
+    
+    if lower_dns.contains("nextdns") || lower_dns.contains("adguard") {
+        // Enable complete SNI omission to bypass deep packet inspection blocks
+        bypass_config.omit_sni = true;
+        bypass_config.verify_peer_cert = false;
+    } else if lower_dns.contains("google") || lower_dns.contains("cloudflare") {
+        // Enable SNI spoofing using a trusted domestic cloud or CDN hostname to disguise traffic
+        bypass_config.spoof_sni_domain = Some(crate::protocols::tls_config::get_recommended_spoof_domain(0).to_string());
+        bypass_config.verify_peer_cert = false;
+    }
+
+    // Configure the quiche Config for DPI bypass and acquire the custom SNI header value
+    let (sni_header, _) = crate::protocols::tls_config::configure_tls_for_bypass(
+        peer_addr,
+        dns_ip,
+        &bypass_config,
+        &mut config,
+    );
+
     // Generate a secure random Source Connection ID
     let mut scid = [0u8; quiche::MAX_CONN_ID_LEN];
     let ring_rc = ring::rand::SystemRandom::new();
@@ -86,10 +117,15 @@ pub async fn resolve_via_doq(
     }
     let scid = quiche::ConnectionId::from_ref(&scid);
 
-    // Establish raw quiche connection
-    let server_name = "dns.google"; // SNI hostname for TLS validation
+    // Establish raw quiche connection using the custom SNI header
     let local_addr = socket.local_addr()?;
-    let mut conn = quiche::connect(Some(server_name), &scid, local_addr, peer_addr, &mut config)?;
+    let mut conn = quiche::connect(
+        sni_header.as_deref(),
+        &scid,
+        local_addr,
+        peer_addr,
+        &mut config
+    )?;
 
     // Attempt 0-RTT Session Resumption: Retrieve cached ticket
     let cache_key = format!("{}:{}", dns_ip, port);
