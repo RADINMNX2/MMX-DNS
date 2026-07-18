@@ -208,44 +208,64 @@ pub fn build_reply_packet(
     src_port: u16, // Original client source port
     dst_port: u16, // Original server destination port (53)
 ) -> Option<Vec<u8>> {
+    let mut out = vec![0u8; 65535];
+    if let Some(len) = build_reply_packet_in_place(dns_reply, src_ip, dst_ip, src_port, dst_port, &mut out) {
+        out.truncate(len);
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Zero-allocation, in-place dynamic packet assembler that formats an outbound IP/UDP frame with the resolved DNS payload.
+pub fn build_reply_packet_in_place(
+    dns_reply: &[u8],
+    src_ip: &[u8], // Original client source IP
+    dst_ip: &[u8], // Original server destination IP
+    src_port: u16, // Original client source port
+    dst_port: u16, // Original server destination port (53)
+    out_buf: &mut [u8],
+) -> Option<usize> {
     // If original packet is IPv4
     if src_ip.len() == 4 && dst_ip.len() == 4 {
         let ip_header_len = 20;
         let udp_header_len = 8;
         let total_packet_len = ip_header_len + udp_header_len + dns_reply.len();
         
-        let mut packet = vec![0u8; total_packet_len];
+        if out_buf.len() < total_packet_len {
+            return None;
+        }
         
         // --- IP HEADER ---
-        packet[0] = 0x45; // Version 4, IHL = 5 (20 bytes)
-        packet[1] = 0x00; // Type of service
-        packet[2..4].copy_from_slice(&(total_packet_len as u16).to_be_bytes());
-        packet[4..6].copy_from_slice(&0u16.to_be_bytes()); // Identification
-        packet[6..8].copy_from_slice(&0x4000u16.to_be_bytes()); // Flags: Don't Fragment (DF)
-        packet[8] = 64; // TTL
-        packet[9] = 17; // Protocol: UDP (17)
-        packet[10..12].copy_from_slice(&0u16.to_be_bytes()); // Checksum placeholder
+        out_buf[0] = 0x45; // Version 4, IHL = 5 (20 bytes)
+        out_buf[1] = 0x00; // Type of service
+        out_buf[2..4].copy_from_slice(&(total_packet_len as u16).to_be_bytes());
+        out_buf[4..6].copy_from_slice(&0u16.to_be_bytes()); // Identification
+        out_buf[6..8].copy_from_slice(&0x4000u16.to_be_bytes()); // Flags: Don't Fragment (DF)
+        out_buf[8] = 64; // TTL
+        out_buf[9] = 17; // Protocol: UDP (17)
+        out_buf[10..12].copy_from_slice(&0u16.to_be_bytes()); // Checksum placeholder
         
         // Swap IPs: Source IP becomes Destination, Destination IP becomes Source
-        packet[12..16].copy_from_slice(dst_ip);
-        packet[16..20].copy_from_slice(src_ip);
+        out_buf[12..16].copy_from_slice(dst_ip);
+        out_buf[16..20].copy_from_slice(src_ip);
         
         // Calculate and set IP checksum
-        let checksum = calculate_ipv4_checksum(&packet[0..20]);
-        packet[10..12].copy_from_slice(&checksum.to_be_bytes());
+        let checksum = calculate_ipv4_checksum(&out_buf[0..20]);
+        out_buf[10..12].copy_from_slice(&checksum.to_be_bytes());
         
         // --- UDP HEADER ---
         let udp_offset = ip_header_len;
-        packet[udp_offset..udp_offset + 2].copy_from_slice(&dst_port.to_be_bytes()); // Src Port is original Dst Port (53)
-        packet[udp_offset + 2..udp_offset + 4].copy_from_slice(&src_port.to_be_bytes()); // Dst Port is original Src Port
+        out_buf[udp_offset..udp_offset + 2].copy_from_slice(&dst_port.to_be_bytes()); // Src Port is original Dst Port (53)
+        out_buf[udp_offset + 2..udp_offset + 4].copy_from_slice(&src_port.to_be_bytes()); // Dst Port is original Src Port
         let udp_len = (udp_header_len + dns_reply.len()) as u16;
-        packet[udp_offset + 4..udp_offset + 6].copy_from_slice(&udp_len.to_be_bytes());
-        packet[udp_offset + 6..udp_offset + 8].copy_from_slice(&0u16.to_be_bytes()); // Optional UDP checksum in IPv4
+        out_buf[udp_offset + 4..udp_offset + 6].copy_from_slice(&udp_len.to_be_bytes());
+        out_buf[udp_offset + 6..udp_offset + 8].copy_from_slice(&0u16.to_be_bytes()); // Optional UDP checksum in IPv4
         
         // --- DNS REPLY PAYLOAD ---
-        packet[udp_offset + 8..].copy_from_slice(dns_reply);
+        out_buf[udp_offset + 8..total_packet_len].copy_from_slice(dns_reply);
         
-        Some(packet)
+        Some(total_packet_len)
     } else if src_ip.len() == 16 && dst_ip.len() == 16 {
         // IPv6 Frame Assembly
         let ip_header_len = 40;
@@ -253,33 +273,35 @@ pub fn build_reply_packet(
         let payload_len = udp_header_len + dns_reply.len();
         let total_packet_len = ip_header_len + payload_len;
         
-        let mut packet = vec![0u8; total_packet_len];
+        if out_buf.len() < total_packet_len {
+            return None;
+        }
         
         // --- IPv6 HEADER ---
-        packet[0] = 0x60; // Version 6
-        packet[1] = 0x00;
-        packet[2] = 0x00;
-        packet[3] = 0x00; // Flow label
-        packet[4..6].copy_from_slice(&(payload_len as u16).to_be_bytes());
-        packet[6] = 17; // Next Header: UDP (17)
-        packet[7] = 64; // Hop Limit
+        out_buf[0] = 0x60; // Version 6
+        out_buf[1] = 0x00;
+        out_buf[2] = 0x00;
+        out_buf[3] = 0x00; // Flow label
+        out_buf[4..6].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        out_buf[6] = 17; // Next Header: UDP (17)
+        out_buf[7] = 64; // Hop Limit
         
         // Swap IPs
-        packet[8..24].copy_from_slice(dst_ip);
-        packet[24..40].copy_from_slice(src_ip);
+        out_buf[8..24].copy_from_slice(dst_ip);
+        out_buf[24..40].copy_from_slice(src_ip);
         
         // --- UDP HEADER ---
         let udp_offset = ip_header_len;
-        packet[udp_offset..udp_offset + 2].copy_from_slice(&dst_port.to_be_bytes()); // Src Port
-        packet[udp_offset + 2..udp_offset + 4].copy_from_slice(&src_port.to_be_bytes()); // Dst Port
+        out_buf[udp_offset..udp_offset + 2].copy_from_slice(&dst_port.to_be_bytes()); // Src Port
+        out_buf[udp_offset + 2..udp_offset + 4].copy_from_slice(&src_port.to_be_bytes()); // Dst Port
         let udp_len = (udp_header_len + dns_reply.len()) as u16;
-        packet[udp_offset + 4..udp_offset + 6].copy_from_slice(&udp_len.to_be_bytes());
-        packet[udp_offset + 6..udp_offset + 8].copy_from_slice(&0u16.to_be_bytes()); // UDP Checksum optional placeholder
+        out_buf[udp_offset + 4..udp_offset + 6].copy_from_slice(&udp_len.to_be_bytes());
+        out_buf[udp_offset + 6..udp_offset + 8].copy_from_slice(&0u16.to_be_bytes()); // UDP Checksum optional placeholder
         
         // --- DNS REPLY PAYLOAD ---
-        packet[udp_offset + 8..].copy_from_slice(dns_reply);
+        out_buf[udp_offset + 8..total_packet_len].copy_from_slice(dns_reply);
         
-        Some(packet)
+        Some(total_packet_len)
     } else {
         None
     }

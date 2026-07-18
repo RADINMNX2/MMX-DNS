@@ -70,6 +70,13 @@ pub async fn resolve_via_doq(
     };
 
     let socket = UdpSocket::bind(bind_addr)?;
+    
+    // Apply AetherUDP Socket Tuning
+    use std::os::unix::io::AsRawFd;
+    if let Err(e) = crate::sockets::tuning::tune_socket_fd(socket.as_raw_fd()) {
+        log::warn!("Failed to apply socket tuning in resolve_via_doq: {:?}", e);
+    }
+    
     socket.set_nonblocking(true)?;
 
     // Create a robust quiche configuration
@@ -295,6 +302,13 @@ pub fn migrate_connection_socket(
         .map_err(|_| DoqError::EngineError("Invalid local IP address for connection migration".to_string()))?;
         
     let new_socket = UdpSocket::bind(new_addr)?;
+    
+    // Apply AetherUDP Socket Tuning
+    use std::os::unix::io::AsRawFd;
+    if let Err(e) = crate::sockets::tuning::tune_socket_fd(new_socket.as_raw_fd()) {
+        log::warn!("Failed to apply socket tuning in migrate_connection_socket: {:?}", e);
+    }
+    
     new_socket.set_nonblocking(true)?;
     
     log::info!("Active connection successfully migrated to new interface socket: {}", new_addr);

@@ -99,6 +99,15 @@ pub fn start_predictive_prefetcher(
     });
 }
 
+/// Publicly accessible helper to trigger the prefetch cycle immediately.
+pub async fn trigger_immediate_prefetch_cycle(
+    primary_dns: &str,
+    secondary_dns: &str,
+    protocol: &str,
+) {
+    perform_prefetch_cycle(primary_dns, secondary_dns, protocol).await;
+}
+
 /// Asynchronously resolves all gaming endpoints and populates the local cache.
 async fn perform_prefetch_cycle(
     primary_dns: &str,

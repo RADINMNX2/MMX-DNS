@@ -16,9 +16,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Gamepad
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
 import com.example.ui.viewmodel.DnsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,10 +45,26 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var currentTab by remember { mutableStateOf(0) } // 0 = Dashboard, 1 = Profiles
+    var currentTab by remember { mutableStateOf(0) } // 0 = Dashboard, 1 = Gaming Shield, 2 = Profiles, 3 = Logs
 
     // Collect all states from ViewModel
     val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
+    val isAppInForeground by viewModel.isAppInForeground.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.setAppInForeground(false)
+            } else if (event == Lifecycle.Event.ON_START) {
+                viewModel.setAppInForeground(true)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     val activeProfileName by viewModel.activeProfileName.collectAsStateWithLifecycle()
     val activePrimaryDns by viewModel.activePrimaryDns.collectAsStateWithLifecycle()
     val activeSecondaryDns by viewModel.activeSecondaryDns.collectAsStateWithLifecycle()
@@ -55,8 +76,21 @@ fun MainScreen(
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isTurboEnabled by viewModel.isTurboEnabled.collectAsStateWithLifecycle()
+    val isGamingShieldEnabled by viewModel.isGamingShieldEnabled.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -64,6 +98,16 @@ fun MainScreen(
             // Permission granted, toggle VPN
             viewModel.toggleVpn()
         }
+    }
+
+    if (!isAppInForeground) {
+        // Complete background stasis: stop rendering UI tree, halt animations, clear state recomposition
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFF070913))
+        )
+        return
     }
 
     Scaffold(
@@ -74,7 +118,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color(0xE60E121E))
                     .border(BorderStroke(0.5.dp, Color(0x33FFFFFF)), RoundedCornerShape(24.dp))
@@ -83,7 +127,7 @@ fun MainScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -102,19 +146,19 @@ fun MainScreen(
                             imageVector = if (isDashboardActive) Icons.Filled.Home else Icons.Outlined.Home,
                             contentDescription = "Home Dashboard",
                             tint = if (isDashboardActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Dashboard",
+                            text = "Core",
                             fontSize = 11.sp,
                             fontWeight = if (isDashboardActive) FontWeight.Bold else FontWeight.Normal,
                             color = if (isDashboardActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
                         )
                     }
 
-                    // Profiles Tab button
-                    val isProfilesActive = currentTab == 1
+                    // Gaming Shield Tab button
+                    val isGamingShieldActive = currentTab == 1
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
@@ -122,13 +166,39 @@ fun MainScreen(
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 1 }
                             .padding(vertical = 10.dp)
+                            .testTag("tab_gaming_shield")
+                    ) {
+                        Icon(
+                            imageVector = if (isGamingShieldActive) Icons.Filled.Gamepad else Icons.Outlined.Gamepad,
+                            contentDescription = "Gaming Shield",
+                            tint = if (isGamingShieldActive) Color(0xFF00FF88) else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Shield",
+                            fontSize = 11.sp,
+                            fontWeight = if (isGamingShieldActive) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isGamingShieldActive) Color(0xFF00FF88) else Color.White.copy(alpha = 0.5f)
+                        )
+                    }
+
+                    // Profiles Tab button
+                    val isProfilesActive = currentTab == 2
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { currentTab = 2 }
+                            .padding(vertical = 10.dp)
                             .testTag("tab_profiles")
                     ) {
                         Icon(
                             imageVector = if (isProfilesActive) Icons.Filled.Dns else Icons.Outlined.Dns,
                             contentDescription = "DNS Profiles",
                             tint = if (isProfilesActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -140,13 +210,13 @@ fun MainScreen(
                     }
 
                     // Logs Tab button
-                    val isLogsActive = currentTab == 2
+                    val isLogsActive = currentTab == 3
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable { currentTab = 2 }
+                            .clickable { currentTab = 3 }
                             .padding(vertical = 10.dp)
                             .testTag("tab_logs")
                     ) {
@@ -154,7 +224,7 @@ fun MainScreen(
                             imageVector = if (isLogsActive) Icons.Filled.History else Icons.Outlined.History,
                             contentDescription = "Engine Logs",
                             tint = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -209,14 +279,23 @@ fun MainScreen(
                             } else {
                                 viewModel.toggleVpn()
                             }
-                        },
-                        gamingApps = gamingApps,
-                        onToggleGamingApp = { packageName, isSelected ->
-                            viewModel.toggleGamingAppSelection(packageName, isSelected)
                         }
                     )
                 }
                 1 -> {
+                    GamingShieldScreen(
+                        isGamingShieldEnabled = isGamingShieldEnabled,
+                        onToggleGamingShield = { viewModel.setGamingShieldEnabled(it) },
+                        gamingApps = gamingApps,
+                        onToggleGamingApp = { packageName, isSelected ->
+                            viewModel.toggleGamingAppSelection(packageName, isSelected)
+                        },
+                        onAddCustomApp = { name, packageName ->
+                            viewModel.addCustomGamingApp(name, packageName)
+                        }
+                    )
+                }
+                2 -> {
                     ProfileScreen(
                         profiles = profiles,
                         currentSelectedId = selectedProfile?.id,
@@ -227,7 +306,7 @@ fun MainScreen(
                         }
                     )
                 }
-                2 -> {
+                3 -> {
                     val logs by viewModel.logs.collectAsStateWithLifecycle()
                     LogScreen(
                         logs = logs,

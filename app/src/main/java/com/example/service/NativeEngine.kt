@@ -142,7 +142,7 @@ class NativeEngine {
             }
             diagnosticLog.append("\n=========================================================================")
             
-            Log.e(TAG, diagnosticLog.toString())
+            Log.w(TAG, "Native engine not available, using JVM fallback. Run cargo ndk to build the native library.")
         }
     }
 }

@@ -114,7 +114,22 @@ pub async fn resolve_query(
 
 /// Resolves standard DNS query over UDP Port 53.
 pub async fn resolve_via_udp(query: &[u8], dns_ip: &str) -> Result<Vec<u8>, std::io::Error> {
+    // Intercept with AetherUDP Multi-Path Racing if Wi-Fi and/or Cellular are active
+    if crate::sockets::racing::RACING_COORDINATOR.has_active_sockets() {
+        if let Some(res) = crate::sockets::racing::RACING_COORDINATOR.resolve_dns(query, dns_ip).await {
+            log::info!("AetherUDP Racing: Successfully resolved UDP query via parallel multi-path racing.");
+            return Ok(res);
+        }
+    }
+
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    
+    // Apply AetherUDP Socket Tuning
+    use std::os::unix::io::AsRawFd;
+    if let Err(e) = crate::sockets::tuning::tune_socket_fd(socket.as_raw_fd()) {
+        log::warn!("Failed to apply socket tuning in resolve_via_udp: {:?}", e);
+    }
+    
     let target = format!("{}:53", dns_ip);
     
     socket.connect(&target).await?;

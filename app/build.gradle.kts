@@ -12,16 +12,13 @@ plugins {
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
-
   defaultConfig {
-    applicationId = "com.example"
+    applicationId = "com.aistudio.vpn.hxpfbq"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
-
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
     ndk {
       abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
     }
@@ -52,14 +49,17 @@ android {
     }
     debug { signingConfig = signingConfigs.getByName("debugConfig") }
   }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
+
   buildFeatures {
     compose = true
     buildConfig = true
   }
+
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
@@ -72,11 +72,10 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
-// Some unused dependencies are commented out below instead of being removed.
-// This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
@@ -100,6 +99,7 @@ dependencies {
   // implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
+
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -110,17 +110,18 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
+
   implementation(libs.firebase.appcheck.recaptcha)
-  compileOnly("org.chromium.net:cronet-api:113.5672.61")
-  compileOnly("org.chromium.net:cronet-common:113.5672.61")
-  implementation(libs.play.services.cronet) {
-      exclude(group = "org.chromium.net", module = "cronet-api")
-      exclude(group = "org.chromium.net", module = "cronet-common")
-  }
-  implementation(libs.cronet.fallback) {
-      exclude(group = "org.chromium.net", module = "cronet-api")
-      exclude(group = "org.chromium.net", module = "cronet-common")
-  }
+  implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+  implementation("com.google.android.gms:play-services-cronet:18.0.1")
+  
+  
+
+  
+  
+  
+  
+
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)
@@ -128,6 +129,7 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
+
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -137,13 +139,16 @@ dependencies {
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
+
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
+
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
+
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }

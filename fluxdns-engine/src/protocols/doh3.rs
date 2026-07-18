@@ -78,6 +78,13 @@ pub async fn resolve_via_doh3(
     };
 
     let socket = UdpSocket::bind(bind_addr)?;
+    
+    // Apply AetherUDP Socket Tuning
+    use std::os::unix::io::AsRawFd;
+    if let Err(e) = crate::sockets::tuning::tune_socket_fd(socket.as_raw_fd()) {
+        log::warn!("Failed to apply socket tuning in resolve_via_doh3: {:?}", e);
+    }
+    
     socket.set_nonblocking(true)?;
 
     // Create quiche QUIC configuration

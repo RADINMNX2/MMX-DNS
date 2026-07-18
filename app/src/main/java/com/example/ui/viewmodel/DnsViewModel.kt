@@ -41,6 +41,12 @@ class DnsViewModel(
         }
     }
 
+    fun addCustomGamingApp(name: String, packageName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertGamingApp(com.example.data.GamingApp(packageName = packageName, name = name, isSelected = true))
+        }
+    }
+
     val vpnState: StateFlow<VpnState> = DnsVpnService.state
     val activeProfileName: StateFlow<String> = DnsVpnService.activeProfileName
     val activePrimaryDns: StateFlow<String> = DnsVpnService.activePrimaryDns
@@ -67,6 +73,20 @@ class DnsViewModel(
     private val _isTurboEnabled = MutableStateFlow(true)
     val isTurboEnabled: StateFlow<Boolean> = _isTurboEnabled.asStateFlow()
 
+    private val _isAppInForeground = MutableStateFlow(true)
+    val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
+
+    fun setAppInForeground(foreground: Boolean) {
+        _isAppInForeground.value = foreground
+        if (!foreground) {
+            Log.d("DnsViewModel", "ZIBE: ON_STOP caught. Triggering manual GC and halting UI flows.")
+            // Trigger a lightweight manual garbage collection exactly once to flush the JVM heap before entering background stasis
+            System.gc()
+        } else {
+            Log.d("DnsViewModel", "ZIBE: ON_START caught. Resuming all UI flows and active monitoring.")
+        }
+    }
+
     fun setTurboEnabled(enabled: Boolean) {
         _isTurboEnabled.value = enabled
         // If VPN is connected, dynamically switch to the new protocol instantly!
@@ -87,7 +107,39 @@ class DnsViewModel(
         }
     }
 
+    private val _isGamingShieldEnabled = MutableStateFlow(true)
+    val isGamingShieldEnabled: StateFlow<Boolean> = _isGamingShieldEnabled.asStateFlow()
+
+    fun setGamingShieldEnabled(enabled: Boolean) {
+        _isGamingShieldEnabled.value = enabled
+        context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("gaming_shield_enabled", enabled)
+            .apply()
+
+        // If VPN is connected, dynamically reload to apply split tunneling config instantly!
+        if (vpnState.value == VpnState.CONNECTED) {
+            val currentSelected = _selectedProfile.value ?: return
+            val intent = Intent(context, DnsVpnService::class.java).apply {
+                action = DnsVpnService.ACTION_START
+                putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
+                putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
+                putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+    }
+
     init {
+        // Load initial Gaming Shield setting
+        val prefs = context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
+        _isGamingShieldEnabled.value = prefs.getBoolean("gaming_shield_enabled", true)
+
         // Automatically fetch default/first profile and start periodic ping tests
         viewModelScope.launch {
             repository.allProfiles.collectLatest { profiles ->
@@ -105,6 +157,7 @@ class DnsViewModel(
                 if (state == VpnState.CONNECTED) {
                     startTime = System.currentTimeMillis()
                     while (state == VpnState.CONNECTED) {
+                        _isAppInForeground.first { it }
                         val elapsedMs = System.currentTimeMillis() - startTime
                         val seconds = (elapsedMs / 1000) % 60
                         val minutes = (elapsedMs / (1000 * 60)) % 60
@@ -121,6 +174,7 @@ class DnsViewModel(
         // Start periodic ping measurement
         viewModelScope.launch {
             while (true) {
+                _isAppInForeground.first { it }
                 measurePing()
                 delay(3000) // update ping every 3 seconds
             }

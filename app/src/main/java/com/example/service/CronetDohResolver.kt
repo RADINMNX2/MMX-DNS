@@ -30,6 +30,15 @@ class CronetDohResolver(private val context: Context) {
     init {
         try {
             Log.i(TAG, "Initializing CronetEngine for secure HTTP/3 and QUIC...")
+            
+            // Proactively install Google Play Services Cronet Provider
+            try {
+                com.google.android.gms.net.CronetProviderInstaller.installProvider(context)
+                Log.i(TAG, "Google Play Services Cronet provider installed successfully.")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to install Play Services Cronet provider: ${e.message}. Attempting default initialization.")
+            }
+
             val cacheDir = File(context.cacheDir, "cronet_cache")
             if (!cacheDir.exists()) {
                 cacheDir.mkdirs()

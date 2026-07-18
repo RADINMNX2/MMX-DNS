@@ -57,8 +57,6 @@ fun DashboardScreen(
     isTurboEnabled: Boolean,
     onToggleTurbo: (Boolean) -> Unit,
     onToggleVpn: () -> Unit,
-    gamingApps: List<com.example.data.GamingApp> = emptyList(),
-    onToggleGamingApp: (packageName: String, isSelected: Boolean) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val isConnected = vpnState == VpnState.CONNECTED
@@ -829,111 +827,6 @@ fun DashboardScreen(
                             ),
                             modifier = Modifier.testTag("turbo_switch")
                         )
-                    }
-                }
-
-                // Row 4: Split-Tunneling Gaming Shield Panel
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0x66080C16)),
-                    border = BorderStroke(1.dp, Color(0x0AFFFFFF))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .background(Color(0x1F00FF88), RoundedCornerShape(8.dp))
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Gamepad,
-                                        contentDescription = "Split Tunneling Gaming Shield",
-                                        tint = Color(0xFF00FF88),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "GAMING SHIELD (SPLIT)",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White.copy(alpha = 0.4f),
-                                        letterSpacing = 1.sp
-                                    )
-                                    Text(
-                                        text = "Route Only Gaming DNS",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF00FF88)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Enable specific games to isolate and route matchmaking & gameplay DNS. Non-selected apps/system traffic will completely bypass the VPN for native performance and zero packet overhead.",
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.55f)
-                        )
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        gamingApps.forEach { app ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .background(Color(0x2205080E), RoundedCornerShape(10.dp))
-                                    .border(
-                                        BorderStroke(
-                                            0.5.dp,
-                                            if (app.isSelected) Color(0x3300FF88) else Color(0x05FFFFFF)
-                                        ),
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                    .clickable { onToggleGamingApp(app.packageName, !app.isSelected) }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = app.name,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (app.isSelected) Color(0xFF00FF88) else Color.White
-                                    )
-                                    Text(
-                                        text = app.packageName,
-                                        fontSize = 9.sp,
-                                        color = Color.White.copy(alpha = 0.4f),
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-
-                                Checkbox(
-                                    checked = app.isSelected,
-                                    onCheckedChange = { onToggleGamingApp(app.packageName, it) },
-                                    colors = CheckboxDefaults.colors(
-                                        checkedColor = Color(0xFF00FF88),
-                                        uncheckedColor = Color(0xFF4C5D7E),
-                                        checkmarkColor = Color(0xFF04060A)
-                                    )
-                                )
-                            }
-                        }
                     }
                 }
             }

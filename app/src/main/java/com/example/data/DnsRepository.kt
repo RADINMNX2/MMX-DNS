@@ -25,5 +25,7 @@ class DnsRepository(
 
     suspend fun updateGamingApp(app: GamingApp) = gamingAppDao.updateApp(app)
 
+    suspend fun insertGamingApp(app: GamingApp) = gamingAppDao.insertApps(listOf(app))
+
     suspend fun setGamingAppSelected(packageName: String, selected: Boolean) = gamingAppDao.setAppSelected(packageName, selected)
 }

@@ -67,7 +67,9 @@ data class SecureDnsConfig(
 class DnsVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var workerThread: Thread? = null
+    private var multiPathManager: MultiPathManager? = null
+    private var telemetryTracker: CellularTelemetryTracker? = null
+    
     private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
@@ -269,6 +271,12 @@ class DnsVpnService : VpnService() {
         _activeSecondaryDns.value = secondaryDns
         _totalQueriesResolved.value = 0
 
+        // Initialize and register MultiPath interface manager
+        multiPathManager = MultiPathManager.getInstance(this).apply {
+            startMonitoring()
+        }
+        FluxDnsEngine.setMultiPathManager(multiPathManager)
+
         log(LogType.INFO, "ENGINE", "Initializing DNS Changer Engine...")
         log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns)")
         log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
@@ -277,9 +285,12 @@ class DnsVpnService : VpnService() {
         startForeground(NOTIFICATION_ID, notification)
 
         isRunning = true
+        telemetryTracker = CellularTelemetryTracker(applicationContext).apply {
+            start()
+        }
         serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-        workerThread = thread(start = true, name = "DNS-VPN-Worker") {
+        serviceScope.launch(Dispatchers.IO + CoroutineName("DNS-VPN-Worker")) {
             try {
                 val builder = Builder()
                 builder.setSession("Vibrant DNS Changer")
@@ -296,26 +307,35 @@ class DnsVpnService : VpnService() {
 
                 // Split Tunneling Configuration
                 try {
-                    val db = com.example.data.DnsDatabase.getDatabase(this@DnsVpnService)
-                    val selectedApps = kotlinx.coroutines.runBlocking { db.gamingAppDao().getSelectedApps() }
-                    
+                    val prefs = getSharedPreferences("dns_settings", android.content.Context.MODE_PRIVATE)
+                    val isGamingShieldEnabled = prefs.getBoolean("gaming_shield_enabled", true)
+
                     var splitTunnelConfigured = false
-                    if (selectedApps.isNotEmpty()) {
-                        for (app in selectedApps) {
-                            try {
-                                builder.addAllowedApplication(app.packageName)
-                                Log.i(TAG, "Split Tunneling: Added allowed app: ${app.packageName}")
-                                splitTunnelConfigured = true
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed to add allowed application: ${app.packageName}", e)
+                    if (isGamingShieldEnabled) {
+                        val db = com.example.data.DnsDatabase.getDatabase(this@DnsVpnService)
+                        val selectedApps = db.gamingAppDao().getSelectedApps()
+                        
+                        if (selectedApps.isNotEmpty()) {
+                            for (app in selectedApps) {
+                                try {
+                                    builder.addAllowedApplication(app.packageName)
+                                    Log.i(TAG, "Split Tunneling: Added allowed app: ${app.packageName}")
+                                    splitTunnelConfigured = true
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to add allowed application: ${app.packageName}", e)
+                                }
                             }
                         }
                     }
                     
                     if (splitTunnelConfigured) {
+                        val db = com.example.data.DnsDatabase.getDatabase(this@DnsVpnService)
+                        val selectedApps = db.gamingAppDao().getSelectedApps()
                         log(LogType.SUCCESS, "TUNNEL", "App-Split Tunneling active! Intercepting DNS only for ${selectedApps.size} game(s).")
+                    } else if (isGamingShieldEnabled) {
+                        log(LogType.INFO, "TUNNEL", "Gaming Shield is ON but no apps are selected. Operating in full system DNS routing mode.")
                     } else {
-                        log(LogType.INFO, "TUNNEL", "No apps selected. Operating in full system DNS routing mode.")
+                        log(LogType.INFO, "TUNNEL", "Gaming Shield is OFF. Operating in full system DNS routing mode.")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to configure App-Split Tunneling", e)
@@ -342,7 +362,7 @@ class DnsVpnService : VpnService() {
                 if (vpnInterfaceLocal == null) {
                     Log.e(TAG, "Failed to establish VPN interface (null)")
                     _state.value = VpnState.DISCONNECTED
-                    return@thread
+                    return@launch
                 }
                 vpnInterface = vpnInterfaceLocal
 
@@ -353,6 +373,8 @@ class DnsVpnService : VpnService() {
                     log(LogType.SUCCESS, "ENGINE", "Native JNI engine successfully bound to TUN interface.")
                     val started = FluxDnsEngine.start(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
                     if (started) {
+                        log(LogType.SUCCESS, "ENGINE", "ZIBE: Finalizing VPN handshake. Applying CPU affinity and thread priority optimizations...")
+                        FluxDnsEngine.applyZibeOptimization()
                         // Start polling native statistics
                         serviceScope.launch {
                             while (isRunning) {
@@ -363,7 +385,7 @@ class DnsVpnService : VpnService() {
                         // Keep worker thread alive while VPN is running
                         while (isRunning) {
                             try {
-                                Thread.sleep(1000)
+                                delay(1000)
                             } catch (e: InterruptedException) {
                                 break
                             }
@@ -400,7 +422,16 @@ class DnsVpnService : VpnService() {
 
         if (FluxDnsEngine.isNativeAvailable) {
             FluxDnsEngine.stop()
+            FluxDnsEngine.resetZibeOptimization()
         }
+
+        telemetryTracker?.stop()
+        telemetryTracker = null
+
+        // Teardown and release MultiPath interface manager
+        multiPathManager?.stopMonitoring()
+        FluxDnsEngine.setMultiPathManager(null)
+        multiPathManager = null
 
         try {
             vpnInterface?.close()
@@ -409,8 +440,8 @@ class DnsVpnService : VpnService() {
         }
         vpnInterface = null
 
-        workerThread?.interrupt()
-        workerThread = null
+        
+        
 
         serviceScope.cancel()
 
@@ -421,7 +452,7 @@ class DnsVpnService : VpnService() {
         log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully. Default system DNS restored.")
     }
 
-    private fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
+    private suspend fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
         val fileDescriptor = vpnInterface.fileDescriptor
         val input = FileInputStream(fileDescriptor)
         val output = FileOutputStream(fileDescriptor)
@@ -433,7 +464,7 @@ class DnsVpnService : VpnService() {
                 packetBuffer.clear()
                 val length = input.read(packetBuffer.array())
                 if (length <= 0) {
-                    Thread.sleep(5) // Reduced sleep for faster cycle responsiveness
+                    delay(5) // Reduced sleep for faster cycle responsiveness
                     continue
                 }
 
@@ -851,7 +882,7 @@ class DnsVpnService : VpnService() {
             clearMethod.invoke(addressCache)
             Log.i(TAG, "InetAddress addressCache cleared successfully.")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to flush InetAddress JVM cache", e)
+            Log.w(TAG, "Skipped flushing InetAddress JVM cache (not supported on this Android version)")
         }
     }
 
