@@ -29,43 +29,66 @@ class CronetDohResolver(private val context: Context) {
 
     init {
         try {
-            Log.i(TAG, "Initializing CronetEngine for secure HTTP/3 and QUIC...")
-            
-            // Proactively install Google Play Services Cronet Provider
-            try {
-                com.google.android.gms.net.CronetProviderInstaller.installProvider(context)
-                Log.i(TAG, "Google Play Services Cronet provider installed successfully.")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to install Play Services Cronet provider: ${e.message}. Attempting default initialization.")
+            Log.i(TAG, "Initializing secure DNS-over-HTTPS/3 Resolver with Dual-Provider Cronet Engine...")
+            cronetEngine = CronetEngineProvider.createCronetEngine(context)
+            if (cronetEngine != null) {
+                Log.i(TAG, "CronetDohResolver initialized successfully.")
+            } else {
+                Log.e(TAG, "CronetDohResolver failed: CronetEngine is null.")
             }
-
-            val cacheDir = File(context.cacheDir, "cronet_cache")
-            if (!cacheDir.exists()) {
-                cacheDir.mkdirs()
-            }
-
-            val builder = CronetEngine.Builder(context)
-                .enableHttp2(true)
-                .enableQuic(true)
-                .enableBrotli(true)
-                .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISK, 10 * 1024 * 1024) // 10MB Disk Cache
-                .setStoragePath(cacheDir.absolutePath)
-
-            cronetEngine = builder.build()
-            Log.i(TAG, "CronetEngine initialized successfully with HTTP/3 support.")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize CronetEngine.", e)
+            Log.e(TAG, "Failed to initialize CronetDohResolver.", e)
         }
     }
 
+    /**
+     * Converts a domain-based DoH URL to a direct IP-based DoH URL.
+     * This completely avoids recursive bootstrap lookups (chicken-and-egg DNS loop)
+     * and relies on IP address SANs in certificates (RFC 2818) for native TLS security.
+     */
+    private fun convertToDirectIpUrl(serverUrl: String): String {
+        return try {
+            val uri = java.net.URI(serverUrl)
+            val host = uri.host ?: return serverUrl
+            val ip = when (host) {
+                "dns.google" -> "8.8.8.8"
+                "cloudflare-dns.com", "one.one.one.one" -> "1.1.1.3" // Defaulting to security-focused family endpoint
+                "dns.quad9.net" -> "9.9.9.9"
+                "dns.adguard-dns.com", "dns.adguard.com" -> "94.140.14.14"
+                "dns.controld.com" -> "76.76.2.0"
+                else -> host
+            }
+            if (ip != host) {
+                val portStr = if (uri.port != -1) ":${uri.port}" else ""
+                val path = uri.rawPath ?: "/dns-query"
+                val query = if (uri.rawQuery != null) "?${uri.rawQuery}" else ""
+                val directUrl = "https://$ip$portStr$path$query"
+                Log.d(TAG, "Bootstrap bypass: mapped domain '$host' to direct IP URL: $directUrl")
+                directUrl
+            } else {
+                serverUrl
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error performing direct IP bootstrap translation for: $serverUrl", e)
+            serverUrl
+        }
+    }
+
+    /**
+     * Asynchronously resolves a DNS query over HTTP/3 (or fallback to HTTP/2 TCP)
+     * using the direct IP URL to avoid the bootstrap chicken-and-egg problem.
+     */
     suspend fun resolveQuery(query: ByteArray, serverUrl: String): ByteArray {
         val engine = cronetEngine ?: throw IOException("Cronet engine not initialized")
         
+        // Translate server URL to direct-IP to bypass DNS resolution loop
+        val directIpUrl = convertToDirectIpUrl(serverUrl)
+
         return suspendCancellableCoroutine { continuation ->
             try {
                 val callback = DohRequestCallback(continuation)
                 val requestBuilder = engine.newUrlRequestBuilder(
-                    serverUrl,
+                    directIpUrl,
                     callback,
                     executor
                 )

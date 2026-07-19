@@ -30,6 +30,54 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Set up Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Configure NDK Environment and local.properties
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ndk.dir=${{ steps.setup-ndk.outputs.ndk-path }}" > local.properties
+          echo "NDK configured at: ${{ steps.setup-ndk.outputs.ndk-path }}"
+          cat local.properties
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            fluxdns-engine/target/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-ndk
+        run: |
+          if ! command -v cargo-ndk &> /dev/null; then
+            echo "Installing cargo-ndk..."
+            cargo install cargo-ndk
+          else
+            echo "cargo-ndk is already installed (restored from cache)"
+          fi
+
+      - name: Build FluxDNS Native Engine (Rust CDYLIB)
+        run: |
+          cd fluxdns-engine
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -o ../app/src/main/jniLibs build --release
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:

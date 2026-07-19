@@ -22,6 +22,11 @@ android {
     ndk {
       abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
     }
+    externalNativeBuild {
+      cmake {
+        arguments("-DANDROID_STL=c++_shared")
+      }
+    }
   }
 
   signingConfigs {

@@ -163,58 +163,5 @@ pub async fn send_packet_clamped(
     }
 }
 
-/// JNI binding to allow the Android client to enforce the Don't Fragment flag on a raw file descriptor.
-#[no_mangle]
-pub extern "system" fn Java_com_example_service_FluxDnsEngine_enforceDfNative(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    fd: jni::sys::jint,
-) -> jni::sys::jint {
-    match enforce_df_flag(fd as RawFd) {
-        Ok(()) => 0,
-        Err(e) => {
-            let os_err = e.raw_os_error().unwrap_or(0);
-            match os_err {
-                libc::EBADF => -1,      // Bad file descriptor
-                libc::EACCES => -2,     // Permission denied
-                libc::ENOPROTOOPT => -3, // Option not supported on this protocol
-                libc::ENOTSOCK => -4,    // File descriptor is not a socket
-                libc::EINVAL => -5,     // Invalid parameters
-                _ => -99,               // Other/unclassified system error
-            }
-        }
-    }
-}
 
-/// JNI binding to retrieve the globally tracked/clamped Path MTU size.
-#[no_mangle]
-pub extern "system" fn Java_com_example_service_FluxDnsEngine_getTrackedMtuNative(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-) -> jni::sys::jint {
-    GLOBAL_MTU_MANAGER.get_mtu() as jni::sys::jint
-}
-
-/// JNI binding to manually set or override the tracked/clamped Path MTU size.
-#[no_mangle]
-pub extern "system" fn Java_com_example_service_FluxDnsEngine_setTrackedMtuNative(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    mtu: jni::sys::jint,
-) {
-    GLOBAL_MTU_MANAGER.update_mtu(mtu as u32);
-}
-
-/// JNI binding to query the actual PMTU from the kernel's routing cache on demand.
-#[no_mangle]
-pub extern "system" fn Java_com_example_service_FluxDnsEngine_queryKernelMtuNative(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    fd: jni::sys::jint,
-) -> jni::sys::jint {
-    match GLOBAL_MTU_MANAGER.query_kernel_pmtu(fd as RawFd) {
-        Some(mtu) => mtu as jni::sys::jint,
-        None => -1,
-    }
-}
 

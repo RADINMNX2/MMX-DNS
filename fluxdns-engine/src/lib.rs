@@ -351,6 +351,79 @@ pub extern "system" fn Java_com_example_service_FluxDnsEngine_resolveQueryNative
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_tuneSocketNative(
+    _env: JNIEnv,
+    _class: JClass,
+    fd: jint,
+) -> jint {
+    match sockets::tuning::tune_socket_fd(fd as RawFd) {
+        Ok(()) => 0,
+        Err(e) => {
+            let os_err = e.raw_os_error().unwrap_or(0);
+            match os_err {
+                libc::EBADF => -1,      // Bad file descriptor
+                libc::EACCES => -2,     // Permission denied
+                libc::ENOPROTOOPT => -3, // Option not supported on this protocol
+                libc::ENOTSOCK => -4,    // File descriptor is not a socket
+                libc::EINVAL => -5,     // Invalid parameters
+                _ => -99,               // Other/unclassified system error
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_enforceDfNative(
+    _env: JNIEnv,
+    _class: JClass,
+    fd: jint,
+) -> jint {
+    match sockets::mtu::enforce_df_flag(fd as RawFd) {
+        Ok(()) => 0,
+        Err(e) => {
+            let os_err = e.raw_os_error().unwrap_or(0);
+            match os_err {
+                libc::EBADF => -1,      // Bad file descriptor
+                libc::EACCES => -2,     // Permission denied
+                libc::ENOPROTOOPT => -3, // Option not supported on this protocol
+                libc::ENOTSOCK => -4,    // File descriptor is not a socket
+                libc::EINVAL => -5,     // Invalid parameters
+                _ => -99,               // Other/unclassified system error
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_getTrackedMtuNative(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    sockets::mtu::GLOBAL_MTU_MANAGER.get_mtu() as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_setTrackedMtuNative(
+    _env: JNIEnv,
+    _class: JClass,
+    mtu: jint,
+) {
+    sockets::mtu::GLOBAL_MTU_MANAGER.update_mtu(mtu as u32);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_example_service_FluxDnsEngine_queryKernelMtuNative(
+    _env: JNIEnv,
+    _class: JClass,
+    fd: jint,
+) -> jint {
+    match sockets::mtu::GLOBAL_MTU_MANAGER.query_kernel_pmtu(fd as RawFd) {
+        Some(mtu) => mtu as jint,
+        None => -1,
+    }
+}
+
 /// Asynchronous duplex network I/O loop using non-blocking Tokio AsyncFd to read/write from/to the TUN.
 async fn run_async_loop(
     fd: RawFd,

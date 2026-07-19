@@ -234,6 +234,13 @@ class DnsVpnService : VpnService() {
     }
 
     private val cronetDohResolver by lazy { CronetDohResolver(applicationContext) }
+    private val resolverController by lazy {
+        FluxResolverController(
+            context = applicationContext,
+            cronetDohResolver = cronetDohResolver,
+            protectSocket = { socket -> protect(socket) }
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -568,66 +575,9 @@ class DnsVpnService : VpnService() {
         protocol: String
     ) {
         val domain = parseDnsQueryName(dnsQuery)
-        log(LogType.INFO, "QUERY", "Requested: $domain via 3-Tier Loop")
+        log(LogType.INFO, "QUERY", "Requested: $domain via 3-Tier Controller")
 
-        var response: ByteArray? = null
-
-        // --- Tier 1 (Native Primary) ---
-        if (FluxDnsEngine.isNativeAvailable) {
-            log(LogType.INFO, "RESOLVER", "Tier 1: Querying Native Rust JNI Engine via DoQ...")
-            try {
-                response = withTimeoutOrNull(2000) {
-                    FluxDnsEngine.resolveQuery(dnsQuery, primaryDns, secondaryDns, "DoQ")
-                }
-                if (response != null) {
-                    log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved $domain via Native Rust JNI Engine.")
-                } else {
-                    log(LogType.WARNING, "RESOLVER", "Tier 1: Native JNI Engine returned empty response or timed out.")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Tier 1 resolve failed: ${e.message}")
-            }
-        } else {
-            log(LogType.WARNING, "RESOLVER", "Tier 1: Native JNI Engine is unavailable. Falling back to Tier 2.")
-        }
-
-        // --- Tier 2 (JVM Fallback - Modern) ---
-        if (response == null) {
-            log(LogType.INFO, "RESOLVER", "Tier 2: Invoking high-performance Kotlin Cronet HTTP/3 (DoH3) resolver...")
-            try {
-                response = withTimeoutOrNull(3000) {
-                    resolveViaDoH3(dnsQuery, primaryDns)
-                }
-                if (response == null && secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-                    response = withTimeoutOrNull(3000) {
-                        resolveViaDoH3(dnsQuery, secondaryDns)
-                    }
-                }
-                
-                if (response != null) {
-                    log(LogType.SUCCESS, "RESOLVED", "Tier 2: Resolved $domain via Kotlin Cronet HTTP/3 (DoH3) resolver.")
-                } else {
-                    log(LogType.WARNING, "RESOLVER", "Tier 2: Kotlin Cronet HTTP/3 resolver failed. Falling back to Tier 3.")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Tier 2 resolve failed: ${e.message}")
-            }
-        }
-
-        // --- Tier 3 (Parallel Fast-UDP Race) ---
-        if (response == null) {
-            log(LogType.WARNING, "FALLBACK", "Tier 2 failed. Tier 3: Invoking Parallel Fast-UDP Racing across Anycast IPs...")
-            try {
-                response = raceUdpQueries(dnsQuery, primaryDns, secondaryDns)
-                if (response != null) {
-                    log(LogType.SUCCESS, "RESOLVED", "Tier 3: Resolved $domain via Parallel Fast-UDP Racing.")
-                } else {
-                    log(LogType.ERROR, "RESOLVER", "Tier 3: Parallel Fast-UDP Racing failed to resolve query.")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Tier 3 Parallel Racing failed: ${e.message}")
-            }
-        }
+        val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, domain)
 
         if (response != null) {
             try {
