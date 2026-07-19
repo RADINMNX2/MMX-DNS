@@ -314,7 +314,7 @@ pub async fn resolve_via_doh3(
                                 
                                 // Cache Session Ticket for the next 0-RTT handshake
                                 if let Some(ticket) = conn.session() {
-                                    GLOBAL_SESSION_CACHE.insert(&cache_key, ticket);
+                                    GLOBAL_SESSION_CACHE.insert(&cache_key, ticket.to_vec());
                                 }
                                 
                                 break;

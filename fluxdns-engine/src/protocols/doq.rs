@@ -258,7 +258,7 @@ pub async fn resolve_via_doq(
                         
                         // Cache Session Ticket: Save TLS resumption state for the next 0-RTT handshake
                         if let Some(ticket) = conn.session() {
-                            GLOBAL_SESSION_CACHE.insert(&cache_key, ticket);
+                            GLOBAL_SESSION_CACHE.insert(&cache_key, ticket.to_vec());
                         }
                         
                         break;

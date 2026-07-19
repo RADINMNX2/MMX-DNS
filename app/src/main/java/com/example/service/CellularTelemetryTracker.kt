@@ -176,22 +176,22 @@ class CellularTelemetryTracker(private val context: Context) {
         var rsrp = -140
         var sinr = -20
 
-        val cellSignalStrengths = signalStrength.cellSignalStrengths
-        for (css in cellSignalStrengths) {
-            when (css) {
-                is CellSignalStrengthLte -> {
-                    val lteRsrp = css.rsrp
-                    val lteSinr = css.rssnr
-                    
-                    if (lteRsrp != UNAVAILABLE) {
-                        rsrp = lteRsrp
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val cellSignalStrengths = signalStrength.cellSignalStrengths
+            for (css in cellSignalStrengths) {
+                when (css) {
+                    is CellSignalStrengthLte -> {
+                        val lteRsrp = css.rsrp
+                        val lteSinr = css.rssnr
+                        
+                        if (lteRsrp != UNAVAILABLE) {
+                            rsrp = lteRsrp
+                        }
+                        if (lteSinr != UNAVAILABLE) {
+                            sinr = lteSinr
+                        }
                     }
-                    if (lteSinr != UNAVAILABLE) {
-                        sinr = lteSinr
-                    }
-                }
-                is CellSignalStrengthNr -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    is CellSignalStrengthNr -> {
                         val nrRsrp = css.ssRsrp
                         val nrSinr = css.ssSinr
                         
@@ -202,19 +202,26 @@ class CellularTelemetryTracker(private val context: Context) {
                             sinr = nrSinr
                         }
                     }
-                }
-                is CellSignalStrengthWcdma -> {
-                    val wcdmaDbm = css.dbm
-                    if (wcdmaDbm != UNAVAILABLE) {
-                        rsrp = wcdmaDbm
+                    is CellSignalStrengthWcdma -> {
+                        val wcdmaDbm = css.dbm
+                        if (wcdmaDbm != UNAVAILABLE) {
+                            rsrp = wcdmaDbm
+                        }
+                    }
+                    is CellSignalStrengthGsm -> {
+                        val gsmDbm = css.dbm
+                        if (gsmDbm != UNAVAILABLE) {
+                            rsrp = gsmDbm
+                        }
                     }
                 }
-                is CellSignalStrengthGsm -> {
-                    val gsmDbm = css.dbm
-                    if (gsmDbm != UNAVAILABLE) {
-                        rsrp = gsmDbm
-                    }
-                }
+            }
+        } else {
+            // Deprecation suppression for legacy levels
+            @Suppress("DEPRECATION")
+            val dbm = if (signalStrength.isGsm) signalStrength.gsmSignalStrength else signalStrength.cdmaDbm
+            if (dbm != UNAVAILABLE && dbm != -1) {
+                rsrp = dbm
             }
         }
 
@@ -225,50 +232,88 @@ class CellularTelemetryTracker(private val context: Context) {
         if (cellInfoList.isNullOrEmpty()) return
 
         var cellId = -1L
+        var rsrp = lastRsrp.get()
+        var sinr = lastSinr.get()
 
         for (info in cellInfoList) {
             if (info.isRegistered) {
-                when (info) {
-                    is CellInfoLte -> {
-                        val identity = info.cellIdentity as CellIdentityLte
-                        val ci = identity.ci
-                        if (ci != UNAVAILABLE && ci != -1) {
-                            cellId = ci.toLong()
-                            break
-                        }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info is CellInfoNr) {
+                    val identity = info.cellIdentity as CellIdentityNr
+                    val nci = identity.nci
+                    if (nci != UNAVAILABLE_LONG && nci != -1L) {
+                        cellId = nci
                     }
-                    is CellInfoNr -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            val identity = info.cellIdentity as CellIdentityNr
-                            val nci = identity.nci
-                            if (nci != UNAVAILABLE_LONG && nci != -1L) {
-                                cellId = nci
-                                break
+                    
+                    val css = info.cellSignalStrength as CellSignalStrengthNr
+                    val nrRsrp = css.ssRsrp
+                    val nrSinr = css.ssSinr
+                    if (nrRsrp != UNAVAILABLE) {
+                        rsrp = nrRsrp
+                    }
+                    if (nrSinr != UNAVAILABLE) {
+                        sinr = nrSinr
+                    }
+                } else {
+                    when (info) {
+                        is CellInfoLte -> {
+                            val identity = info.cellIdentity as CellIdentityLte
+                            val ci = identity.ci
+                            if (ci != UNAVAILABLE && ci != -1) {
+                                cellId = ci.toLong()
+                            }
+                            
+                            val css = info.cellSignalStrength
+                            val lteRsrp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                css.rsrp
+                            } else {
+                                css.dbm
+                            }
+                            if (lteRsrp != UNAVAILABLE) {
+                                rsrp = lteRsrp
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val lteSinr = css.rssnr
+                                if (lteSinr != UNAVAILABLE) {
+                                    sinr = lteSinr
+                                }
+                            }
+                        }
+                        is CellInfoWcdma -> {
+                            val identity = info.cellIdentity as CellIdentityWcdma
+                            val cid = identity.cid
+                            if (cid != UNAVAILABLE && cid != -1) {
+                                cellId = cid.toLong()
+                            }
+                            
+                            val css = info.cellSignalStrength
+                            val wcdmaDbm = css.dbm
+                            if (wcdmaDbm != UNAVAILABLE) {
+                                rsrp = wcdmaDbm
+                            }
+                        }
+                        is CellInfoGsm -> {
+                            val identity = info.cellIdentity as CellIdentityGsm
+                            val cid = identity.cid
+                            if (cid != UNAVAILABLE && cid != -1) {
+                                cellId = cid.toLong()
+                            }
+                            
+                            val css = info.cellSignalStrength
+                            val gsmDbm = css.dbm
+                            if (gsmDbm != UNAVAILABLE) {
+                                rsrp = gsmDbm
                             }
                         }
                     }
-                    is CellInfoWcdma -> {
-                        val identity = info.cellIdentity as CellIdentityWcdma
-                        val cid = identity.cid
-                        if (cid != UNAVAILABLE && cid != -1) {
-                            cellId = cid.toLong()
-                            break
-                        }
-                    }
-                    is CellInfoGsm -> {
-                        val identity = info.cellIdentity as CellIdentityGsm
-                        val cid = identity.cid
-                        if (cid != UNAVAILABLE && cid != -1) {
-                            cellId = cid.toLong()
-                            break
-                        }
-                    }
+                }
+                if (cellId != -1L) {
+                    break
                 }
             }
         }
 
         if (cellId != -1L) {
-            evaluateAndDispatch(lastRsrp.get(), lastSinr.get(), cellId)
+            evaluateAndDispatch(rsrp, sinr, cellId)
         }
     }
 
@@ -305,10 +350,14 @@ class CellularTelemetryTracker(private val context: Context) {
      */
     @Suppress("DEPRECATION")
     private inner class LegacyPhoneStateListener : PhoneStateListener() {
+        @Deprecated("Deprecated in Java")
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
             handleSignalStrengthUpdate(signalStrength)
         }
 
+        @Deprecated("Deprecated in Java")
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
             handleCellInfoUpdate(cellInfo)
         }

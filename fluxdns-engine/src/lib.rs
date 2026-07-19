@@ -623,9 +623,10 @@ async fn run_async_loop(
                                                 &proto
                                              ).await {
                                                  // Increment atomic queries resolved count
-                                                 let engine_state = ENGINE.lock().unwrap();
-                                                 engine_state.queries_resolved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                                                 drop(engine_state);
+                                                 {
+                                                     let engine_state = ENGINE.lock().unwrap();
+                                                     engine_state.queries_resolved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                                 }
                                                  
                                                  // Package DNS response inside a custom IP/UDP frame within a pre-allocated pool buffer
                                                  let mut reply_guard = perf::memory_pool::MEMORY_POOL.acquire();
