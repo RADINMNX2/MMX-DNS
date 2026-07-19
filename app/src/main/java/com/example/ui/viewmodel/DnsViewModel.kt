@@ -58,6 +58,14 @@ class DnsViewModel(
         DnsVpnService.clearLogs()
     }
 
+    private val _pendingCrashLog = MutableStateFlow<String?>(null)
+    val pendingCrashLog: StateFlow<String?> = _pendingCrashLog.asStateFlow()
+
+    fun clearPendingCrashLog() {
+        _pendingCrashLog.value = null
+        com.example.util.CrashHandler.clearCrashLog(context)
+    }
+
     private val _connectionUptime = MutableStateFlow("00:00:00")
     val connectionUptime: StateFlow<String> = _connectionUptime.asStateFlow()
 
@@ -136,6 +144,14 @@ class DnsViewModel(
     }
 
     init {
+        // Check for saved crash logs from previous sessions
+        val savedCrash = com.example.util.CrashHandler.getSavedCrashLog(context)
+        if (savedCrash != null) {
+            _pendingCrashLog.value = savedCrash
+            // Propagate it immediately to the local logs list so it displays in the LOGS tab
+            DnsVpnService.log(com.example.service.LogType.ERROR, "CRASH", "Previous session terminated by unhandled exception:\n$savedCrash")
+        }
+
         // Load initial Gaming Shield setting
         val prefs = context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
         _isGamingShieldEnabled.value = prefs.getBoolean("gaming_shield_enabled", true)

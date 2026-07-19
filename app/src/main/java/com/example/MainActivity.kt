@@ -18,6 +18,9 @@ import com.example.ui.viewmodel.DnsViewModelFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Register global crash recovery system immediately at application start
+        Thread.setDefaultUncaughtExceptionHandler(com.example.util.CrashHandler(applicationContext))
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

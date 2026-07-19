@@ -289,7 +289,11 @@ class DnsVpnService : VpnService() {
         log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
 
         val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         isRunning = true
         telemetryTracker = CellularTelemetryTracker(applicationContext).apply {

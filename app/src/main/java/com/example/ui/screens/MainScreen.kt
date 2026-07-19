@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.History
@@ -315,5 +317,98 @@ fun MainScreen(
                 }
             }
         }
+    }
+
+    val pendingCrashLog by viewModel.pendingCrashLog.collectAsStateWithLifecycle()
+
+    if (pendingCrashLog != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearPendingCrashLog() },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Warning Icon",
+                        tint = Color(0xFFFF0055),
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "CRASH RECOVERY ACTIVE",
+                        color = Color(0xFFFF0055),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "FluxDNS has intercepted an unexpected crash and safely recovered the process. The stack trace is recorded below:",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF07090F))
+                            .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item {
+                                Text(
+                                    text = pendingCrashLog ?: "",
+                                    color = Color(0xFFFF4D79),
+                                    fontSize = 11.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("FluxDNS Crash Report", pendingCrashLog)
+                        clipboard.setPrimaryClip(clip)
+                        android.widget.Toast.makeText(context, "Crash report copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F0FF)),
+                    modifier = Modifier.testTag("copy_crash_report_button")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy Report Icon",
+                            tint = Color(0xFF04060A),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Copy Report", color = Color(0xFF04060A), fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.clearPendingCrashLog() },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(alpha = 0.6f)),
+                    modifier = Modifier.testTag("clear_crash_report_button")
+                ) {
+                    Text("Clear & Close")
+                }
+            },
+            containerColor = Color(0xFF0E121E),
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.border(1.dp, Color(0x33FF0055), RoundedCornerShape(24.dp))
+        )
     }
 }
