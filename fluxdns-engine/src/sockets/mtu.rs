@@ -136,7 +136,7 @@ pub async fn send_packet_clamped(
 
     match socket.send_to(payload_to_send, target).await {
         Ok(bytes_sent) => Ok(bytes_sent),
-        Err(ref e) if e.kind() == ErrorKind::MessageTooLarge => {
+        Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
             log::warn!("EMSGSIZE (Message too large) caught during transmit to {}. Initiating PMTU discovery...", target);
 
             // 1. Try to query the precise PMTU from the Linux kernel

@@ -103,7 +103,7 @@ pub async fn race_query(
     }
 
     // Wait for the winning packet, with a global timeout limit of 3.5 seconds
-    let winning_packet = tokio::select! {
+    let winning_packet: Option<Vec<u8>> = tokio::select! {
         winner = rx.recv() => winner,
         _ = tokio::time::sleep(Duration::from_millis(3500)) => {
             log::warn!("PDR: Global racing session timed out before any resolver succeeded.");

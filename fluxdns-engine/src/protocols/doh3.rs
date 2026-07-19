@@ -1,6 +1,7 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 use crate::protocols::session_cache::GLOBAL_SESSION_CACHE;
+use quiche::h3::NameValue;
 
 /// Custom error type for DoH3 client operations
 #[derive(Debug)]
@@ -99,7 +100,7 @@ pub async fn resolve_via_doh3(
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_stream_data_uni(1_000_000);
-    config.set_migration(true);
+    config.set_disable_active_migration(false);
 
     // Enable 0-RTT
     config.enable_early_data();
@@ -149,7 +150,7 @@ pub async fn resolve_via_doh3(
     let mut early_data_active = false;
     if let Some(ticket) = GLOBAL_SESSION_CACHE.get(&cache_key) {
         log::info!("DoH3 Client: Applying cached session ticket to attempt 0-RTT resumption.");
-        if let Err(e) = conn.set_session_ticket(&ticket) {
+        if let Err(e) = conn.set_session(&ticket) {
             log::warn!("DoH3: Failed to apply session ticket: {:?}", e);
         } else {
             early_data_active = true;
@@ -312,7 +313,7 @@ pub async fn resolve_via_doh3(
                                 log::info!("DoH3: HTTP/3 stream completed query transaction successfully.");
                                 
                                 // Cache Session Ticket for the next 0-RTT handshake
-                                if let Some(ticket) = conn.session_ticket() {
+                                if let Some(ticket) = conn.session() {
                                     GLOBAL_SESSION_CACHE.insert(&cache_key, ticket);
                                 }
                                 

@@ -89,7 +89,7 @@ pub async fn resolve_via_doq(
     config.set_initial_max_stream_data_bidi_local(1_000_000);
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
-    config.set_migration(true); // Enable native QUIC connection migration
+    config.set_disable_active_migration(false); // Enable native QUIC connection migration
 
     // Enable 0-RTT Handshake
     config.enable_early_data();
@@ -139,7 +139,7 @@ pub async fn resolve_via_doq(
     let mut early_data_active = false;
     if let Some(ticket) = GLOBAL_SESSION_CACHE.get(&cache_key) {
         log::info!("DoQ Client: Injecting cached session ticket to attempt 0-RTT resumption.");
-        if let Err(e) = conn.set_session_ticket(&ticket) {
+        if let Err(e) = conn.set_session(&ticket) {
             log::warn!("Failed to apply session ticket: {:?}", e);
         } else {
             early_data_active = true;
@@ -257,7 +257,7 @@ pub async fn resolve_via_doq(
                         log::info!("DoQ Client: Connection completed query exchange successfully.");
                         
                         // Cache Session Ticket: Save TLS resumption state for the next 0-RTT handshake
-                        if let Some(ticket) = conn.session_ticket() {
+                        if let Some(ticket) = conn.session() {
                             GLOBAL_SESSION_CACHE.insert(&cache_key, ticket);
                         }
                         

@@ -45,7 +45,7 @@ pub fn bind_socket_to_wifi(fd: RawFd) -> bool {
         &cls,
         "bindSocketToWifi",
         "(I)Z",
-        &[jni::objects::JValue::Int(fd as jint).as_jni()],
+        &[jni::objects::JValue::Int(fd as jint)],
     );
 
     match res {
@@ -89,7 +89,7 @@ pub fn bind_socket_to_cellular(fd: RawFd) -> bool {
         &cls,
         "bindSocketToCellular",
         "(I)Z",
-        &[jni::objects::JValue::Int(fd as jint).as_jni()],
+        &[jni::objects::JValue::Int(fd as jint)],
     );
 
     match res {

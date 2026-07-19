@@ -61,8 +61,8 @@ pub fn reset_zibe_optimization() -> Result<(), String> {
                 libc::CPU_SET(cpu, &mut cpuset);
             }
             
-            let res = libc::pthread_setaffinity_np(
-                info.pthread,
+            let res = libc::sched_setaffinity(
+                info.tid as libc::pid_t,
                 std::mem::size_of::<libc::cpu_set_t>(),
                 &cpuset,
             );
@@ -94,8 +94,8 @@ fn apply_optimization_internal(pthread: libc::pthread_t, tid: libc::id_t) -> Res
         }
         
         log::info!("ZIBE: Binding thread {:?} to LITTLE CPU cores (0-3)", pthread);
-        let res_affinity = libc::pthread_setaffinity_np(
-            pthread,
+        let res_affinity = libc::sched_setaffinity(
+            tid as libc::pid_t,
             std::mem::size_of::<libc::cpu_set_t>(),
             &cpuset,
         );

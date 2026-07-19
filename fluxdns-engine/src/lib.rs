@@ -309,7 +309,8 @@ pub extern "system" fn Java_com_example_service_FluxDnsEngine_resolveQueryNative
     secondary_dns: JString,
     protocol: JString,
 ) -> jni::sys::jbyteArray {
-    let query_bytes: Vec<u8> = match env.convert_byte_array(&query) {
+    let query_array = unsafe { jni::objects::JByteArray::from_raw(query) };
+    let query_bytes: Vec<u8> = match env.convert_byte_array(&query_array) {
         Ok(b) => b,
         Err(_) => return std::ptr::null_mut(),
     };
