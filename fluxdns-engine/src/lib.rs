@@ -92,7 +92,7 @@ pub static mut JVM: Option<jni::JavaVM> = None;
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _reserved: *mut libc::c_void) -> jint {
     unsafe {
-        JVM = Some(vm.clone());
+        JVM = Some(jni::JavaVM::from_raw(vm.get_java_vm_pointer()).unwrap());
     }
     
     // Pre-cache the Class Reference inside the JNI_OnLoad callback running on the main Android Java thread.
