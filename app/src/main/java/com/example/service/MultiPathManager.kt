@@ -110,6 +110,14 @@ class MultiPathManager(private val context: Context) {
         return wifiNetwork != null && cellularNetwork != null
     }
 
+    fun isWifiConnected(): Boolean {
+        return wifiNetwork != null
+    }
+
+    fun isCellularConnected(): Boolean {
+        return cellularNetwork != null
+    }
+
     /**
      * Binds a native socket file descriptor to the Wi-Fi network routing path.
      */

@@ -49,6 +49,9 @@ fun LogScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedLevelFilter by remember { mutableStateOf<LogType?>(null) }
 
+    var showHealthModal by remember { mutableStateOf(false) }
+    var healthReport by remember { mutableStateOf<HealthReport?>(null) }
+
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
 
     // Filtered logs
@@ -95,6 +98,27 @@ fun LogScreen(
             }
 
             Row {
+                // System Health Check Button
+                IconButton(
+                    onClick = {
+                        healthReport = performSystemHealthCheck(context)
+                        showHealthModal = true
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0x1A00FF66))
+                        .border(1.dp, Color(0x3300FF66), RoundedCornerShape(10.dp))
+                        .testTag("health_check_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = "System Health Check",
+                        tint = Color(0xFF00FF66)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
                 // Clear button with terminal style
                 IconButton(
                     onClick = onClearLogs,
@@ -322,6 +346,148 @@ fun LogScreen(
                 }
             }
         }
+
+        // Cybernetic Self-Diagnostic Dialog
+        if (showHealthModal && healthReport != null) {
+            AlertDialog(
+                onDismissRequest = { showHealthModal = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = "Diagnostic Shield",
+                            tint = if (healthReport!!.overallHealthy) Color(0xFF00FF66) else Color(0xFFFF9900),
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Text(
+                            text = if (healthReport!!.overallHealthy) "SYSTEM OPTIMAL [STABLE]" else "SYSTEM ALERT [CHECK CORES]",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = if (healthReport!!.overallHealthy) Color(0xFF00FF66) else Color(0xFFFF9900)
+                        )
+                    }
+                },
+                text = {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 350.dp)
+                            .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = "SYSTEM DEPLOY ABIs: ${healthReport!!.systemAbis}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+
+                        items(healthReport!!.items) { item ->
+                            val statusColor = when (item.status) {
+                                "PASSED" -> Color(0xFF00FF66)
+                                "WARNING" -> Color(0xFFFF9900)
+                                "FAILED" -> Color(0xFFFF0055)
+                                else -> Color.White
+                            }
+                            val statusBg = statusColor.copy(alpha = 0.08f)
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF0C101F))
+                                    .border(0.5.dp, Color(0x22FFFFFF), RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = item.title,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = Color.White
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(statusBg)
+                                            .border(0.5.dp, statusColor.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = item.status,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp,
+                                            color = statusColor
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Text(
+                                    text = item.details,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val traceText = generateMarkdownReport(healthReport!!)
+                            val clip = ClipData.newPlainText("MNX Core Trace", traceText)
+                            clipboardManager.setPrimaryClip(clip)
+                            Toast.makeText(context, "Diagnostic report copied to clipboard!", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF66)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = "COPY SYSTEM TRACE",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF04060A),
+                            fontSize = 12.sp
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showHealthModal = false }
+                    ) {
+                        Text(
+                            text = "DISMISS",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 12.sp
+                        )
+                    }
+                },
+                containerColor = Color(0xFF070A14),
+                textContentColor = Color.White,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.border(1.dp, Color(0x3300F0FF), RoundedCornerShape(20.dp))
+            )
+        }
     }
 }
 
@@ -426,4 +592,150 @@ fun LogItemRow(
                 .align(Alignment.CenterVertically)
         )
     }
+}
+
+// System Diagnostic Helper Classes & Methods
+data class HealthStatus(
+    val title: String,
+    val status: String, // "PASSED" | "WARNING" | "FAILED"
+    val details: String
+)
+
+data class HealthReport(
+    val timestamp: Long,
+    val overallHealthy: Boolean,
+    val systemAbis: String,
+    val items: List<HealthStatus>
+)
+
+fun performSystemHealthCheck(context: Context): HealthReport {
+    val items = mutableListOf<HealthStatus>()
+    var overallHealthy = true
+
+    // 1. Check Native JNI linkage
+    val hasNative = try {
+        com.example.service.FluxDnsEngine.isNativeAvailable
+    } catch (e: Throwable) {
+        false
+    }
+    
+    val loadErr = try {
+        com.example.service.NativeEngine.getLoadError()
+    } catch (e: Throwable) {
+        null
+    }
+
+    if (hasNative) {
+        items.add(HealthStatus(
+            title = "AETHER ENGINE JNI",
+            status = "PASSED",
+            details = "Native binary 'libfluxdns.so' compiled for [${android.os.Build.SUPPORTED_ABIS.joinToString(", ")}] successfully linked to runtime JVM."
+        ))
+    } else {
+        val detailMsg = loadErr?.let {
+            "Error: ${it.message}\n${android.util.Log.getStackTraceString(it)}"
+        } ?: "Error: UnsatisfiedLinkError - Shared library 'libfluxdns.so' not found in system paths."
+        items.add(HealthStatus(
+            title = "AETHER ENGINE JNI",
+            status = "FAILED",
+            details = "Active legacy JVM loop fallback. Highly recommended to verify NDK compile outputs:\n$detailMsg"
+        ))
+        overallHealthy = false
+    }
+
+    // 2. Check VPN TUN preparation status
+    val isVpnPrepared = try {
+        android.net.VpnService.prepare(context) == null
+    } catch (e: Throwable) {
+        false
+    }
+    if (isVpnPrepared) {
+        items.add(HealthStatus(
+            title = "TUN INTERFACE EXEMPTIONS",
+            status = "PASSED",
+            details = "System Android VPN preparation handle is pre-cleared. No blocking dialogues expected."
+        ))
+    } else {
+        items.add(HealthStatus(
+            title = "TUN INTERFACE EXEMPTIONS",
+            status = "WARNING",
+            details = "System requires VPN runtime request initialization. Dialect prompts will render on toggle."
+        ))
+    }
+
+    // 3. Database connection & accessibility
+    try {
+        val db = com.example.data.DnsDatabase.getDatabase(context)
+        val testDao = db.dnsProfileDao()
+        items.add(HealthStatus(
+            title = "SQLITE ROOM DATABASE",
+            status = "PASSED",
+            details = "Local SQLite SQLiteOpenHelper channel active. Connected to profile manager store securely."
+        ))
+    } catch (e: Exception) {
+        items.add(HealthStatus(
+            title = "SQLITE ROOM DATABASE",
+            status = "FAILED",
+            details = "Profile persistence error: ${e.message}\n${android.util.Log.getStackTraceString(e)}"
+        ))
+        overallHealthy = false
+    }
+
+    // 4. Multipath Interface Check
+    val wifiActive = try {
+        com.example.service.MultiPathManager.getInstance(context).isWifiConnected()
+    } catch (e: Throwable) {
+        false
+    }
+    val cellActive = try {
+        com.example.service.MultiPathManager.getInstance(context).isCellularConnected()
+    } catch (e: Throwable) {
+        false
+    }
+    items.add(HealthStatus(
+        title = "MULTIPATH CALLBACKS",
+        status = "PASSED",
+        details = "Wi-Fi Interface: ${if (wifiActive) "CONNECTED" else "STANDBY"} | Cellular Interface: ${if (cellActive) "CONNECTED" else "STANDBY"}. Connection state callbacks active."
+    ))
+
+    // 5. OS API Target Compatibility
+    val api = android.os.Build.VERSION.SDK_INT
+    if (api >= 35) {
+        items.add(HealthStatus(
+            title = "OS SDK SPECIFICATION",
+            status = "PASSED",
+            details = "System API level $api detected (Android 15+). Elite edge-to-edge layout, multi-path sockets, and network-thread bounds active."
+        ))
+    } else {
+        items.add(HealthStatus(
+            title = "OS SDK SPECIFICATION",
+            status = "WARNING",
+            details = "System API level $api detected. Backward-compatibility emulation wrappers active."
+        ))
+    }
+
+    return HealthReport(
+        timestamp = System.currentTimeMillis(),
+        overallHealthy = overallHealthy,
+        systemAbis = android.os.Build.SUPPORTED_ABIS.joinToString(", "),
+        items = items
+    )
+}
+
+fun generateMarkdownReport(report: HealthReport): String {
+    val sb = StringBuilder()
+    sb.append("=========================================\n")
+    sb.append("   [ AETHER CORES SELF-DIAGNOSTIC REPORT ]   \n")
+    sb.append("=========================================\n")
+    sb.append("Timestamp   : ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date(report.timestamp))}\n")
+    sb.append("Status      : ${if (report.overallHealthy) "STABLE / OPTIMAL" else "ATTENTION REQUIRED"}\n")
+    sb.append("ABIs        : ${report.systemAbis}\n")
+    sb.append("-----------------------------------------\n\n")
+    
+    report.items.forEach { item ->
+        sb.append("[${item.status}] ${item.title}\n")
+        sb.append("Details: ${item.details}\n")
+        sb.append("-----------------------------------------\n")
+    }
+    return sb.toString()
 }

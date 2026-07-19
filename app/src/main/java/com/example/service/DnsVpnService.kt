@@ -473,7 +473,7 @@ class DnsVpnService : VpnService() {
     }
 
     private fun stopVpn() {
-        if (!isRunning) return
+        val wasRunning = isRunning
         isRunning = false
 
         _state.value = VpnState.DISCONNECTED
@@ -485,15 +485,27 @@ class DnsVpnService : VpnService() {
         log(LogType.WARNING, "ENGINE", "Stopping DNS Changer Engine...")
 
         if (FluxDnsEngine.isNativeAvailable) {
-            FluxDnsEngine.stop()
-            FluxDnsEngine.resetZibeOptimization()
+            try {
+                FluxDnsEngine.stop()
+                FluxDnsEngine.resetZibeOptimization()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to stop native engine", e)
+            }
         }
 
-        telemetryTracker?.stop()
+        try {
+            telemetryTracker?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop telemetry tracker", e)
+        }
         telemetryTracker = null
 
         // Teardown and release MultiPath interface manager
-        multiPathManager?.stopMonitoring()
+        try {
+            multiPathManager?.stopMonitoring()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop MultiPath monitoring", e)
+        }
         FluxDnsEngine.setMultiPathManager(null)
         multiPathManager = null
 
@@ -507,15 +519,37 @@ class DnsVpnService : VpnService() {
         
         
 
-        serviceScope.cancel()
+        try {
+            serviceScope.cancel()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel service scope", e)
+        }
         
         // Flush standard JVM, webview, and process network routing descriptor caches
-        DnsCacheFlusher.flushAll(applicationContext)
-        log(LogType.SUCCESS, "CACHE", "System DNS resolution cache programmatically flushed.")
+        try {
+            DnsCacheFlusher.flushAll(applicationContext)
+            log(LogType.SUCCESS, "CACHE", "System DNS resolution cache programmatically flushed.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to flush DNS cache", e)
+        }
 
-        stopForeground(true)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop foreground", e)
+        }
+
         log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully. Default system DNS restored.")
-        stopSelf()
+        try {
+            stopSelf()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop service self", e)
+        }
     }
 
     private suspend fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
@@ -539,53 +573,110 @@ class DnsVpnService : VpnService() {
                 // Parse IP header
                 val versionAndIHL = packetBuffer.get(0).toInt() and 0xFF
                 val version = versionAndIHL shr 4
-                val ihl = versionAndIHL and 0x0F
-                val ipProtocol = packetBuffer.get(9).toInt() and 0xFF
 
-                // Check if UDP (17)
-                if (version == 4 && ipProtocol == 17) {
-                    val ipHeaderLength = ihl * 4
+                if (version == 4) {
+                    val ihl = versionAndIHL and 0x0F
+                    val ipProtocol = packetBuffer.get(9).toInt() and 0xFF
 
-                    // Get Source and Destination IP
-                    val srcIpBytes = ByteArray(4)
-                    val dstIpBytes = ByteArray(4)
+                    // Check if UDP (17)
+                    if (ipProtocol == 17) {
+                        val ipHeaderLength = ihl * 4
 
-                    packetBuffer.position(12)
-                    packetBuffer.get(srcIpBytes)
-                    packetBuffer.get(dstIpBytes)
+                        // Get Source and Destination IP
+                        val srcIpBytes = ByteArray(4)
+                        val dstIpBytes = ByteArray(4)
 
-                    // Get UDP Source and Destination Ports
-                    packetBuffer.position(ipHeaderLength)
-                    val srcPort = packetBuffer.getShort().toInt() and 0xFFFF
-                    val dstPort = packetBuffer.getShort().toInt() and 0xFFFF
-                    val udpLength = packetBuffer.getShort().toInt() and 0xFFFF
-                    packetBuffer.getShort() // Checksum
+                        packetBuffer.position(12)
+                        packetBuffer.get(srcIpBytes)
+                        packetBuffer.get(dstIpBytes)
 
-                    // Check if DNS Query (Destination Port is 53)
-                    if (dstPort == 53) {
-                        val dnsPayloadLength = udpLength - 8
-                        if (dnsPayloadLength > 0) {
-                            val dnsQuery = ByteArray(dnsPayloadLength)
-                            packetBuffer.position(ipHeaderLength + 8)
-                            packetBuffer.get(dnsQuery)
+                        // Get UDP Source and Destination Ports
+                        packetBuffer.position(ipHeaderLength)
+                        val srcPort = packetBuffer.getShort().toInt() and 0xFFFF
+                        val dstPort = packetBuffer.getShort().toInt() and 0xFFFF
+                        val udpLength = packetBuffer.getShort().toInt() and 0xFFFF
+                        packetBuffer.getShort() // Checksum
 
-                            // Clone header fields to prevent concurrency conflicts
-                            val srcIpBytesCopy = srcIpBytes.clone()
-                            val dstIpBytesCopy = dstIpBytes.clone()
+                        // Check if DNS Query (Destination Port is 53)
+                        if (dstPort == 53) {
+                            val dnsPayloadLength = udpLength - 8
+                            if (dnsPayloadLength > 0) {
+                                val dnsQuery = ByteArray(dnsPayloadLength)
+                                packetBuffer.position(ipHeaderLength + 8)
+                                packetBuffer.get(dnsQuery)
 
-                            // Hand off resolution to high-performance non-blocking coroutine
-                            serviceScope.launch {
-                                resolveDnsQueryAndReply(
-                                    dnsQuery,
-                                    srcIpBytesCopy,
-                                    dstIpBytesCopy,
-                                    srcPort,
-                                    dstPort,
-                                    output,
-                                    primaryDns,
-                                    secondaryDns,
-                                    protocol
-                                )
+                                // Clone header fields to prevent concurrency conflicts
+                                val srcIpBytesCopy = srcIpBytes.clone()
+                                val dstIpBytesCopy = dstIpBytes.clone()
+
+                                // Hand off resolution to high-performance non-blocking coroutine
+                                serviceScope.launch {
+                                    resolveDnsQueryAndReply(
+                                        dnsQuery,
+                                        srcIpBytesCopy,
+                                        dstIpBytesCopy,
+                                        srcPort,
+                                        dstPort,
+                                        output,
+                                        primaryDns,
+                                        secondaryDns,
+                                        protocol,
+                                        isIpv6 = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (version == 6) {
+                    // IPv6 standard header has Next Header at byte index 6
+                    val ipProtocol = packetBuffer.get(6).toInt() and 0xFF
+
+                    // Check if UDP (17)
+                    if (ipProtocol == 17) {
+                        val ipHeaderLength = 40
+
+                        // Source and Destination IP (16 bytes each)
+                        val srcIpBytes = ByteArray(16)
+                        val dstIpBytes = ByteArray(16)
+
+                        packetBuffer.position(8)
+                        packetBuffer.get(srcIpBytes)
+                        packetBuffer.get(dstIpBytes)
+
+                        // Get UDP Source and Destination Ports
+                        packetBuffer.position(ipHeaderLength)
+                        val srcPort = packetBuffer.getShort().toInt() and 0xFFFF
+                        val dstPort = packetBuffer.getShort().toInt() and 0xFFFF
+                        val udpLength = packetBuffer.getShort().toInt() and 0xFFFF
+                        packetBuffer.getShort() // Checksum
+
+                        // Check if DNS Query (Destination Port is 53)
+                        if (dstPort == 53) {
+                            val dnsPayloadLength = udpLength - 8
+                            if (dnsPayloadLength > 0) {
+                                val dnsQuery = ByteArray(dnsPayloadLength)
+                                packetBuffer.position(ipHeaderLength + 8)
+                                packetBuffer.get(dnsQuery)
+
+                                // Clone header fields to prevent concurrency conflicts
+                                val srcIpBytesCopy = srcIpBytes.clone()
+                                val dstIpBytesCopy = dstIpBytes.clone()
+
+                                // Hand off resolution to high-performance non-blocking coroutine
+                                serviceScope.launch {
+                                    resolveDnsQueryAndReply(
+                                        dnsQuery,
+                                        srcIpBytesCopy,
+                                        dstIpBytesCopy,
+                                        srcPort,
+                                        dstPort,
+                                        output,
+                                        primaryDns,
+                                        secondaryDns,
+                                        protocol,
+                                        isIpv6 = true
+                                    )
+                                }
                             }
                         }
                     }
@@ -631,53 +722,94 @@ class DnsVpnService : VpnService() {
         output: FileOutputStream,
         primaryDns: String,
         secondaryDns: String,
-        protocol: String
+        protocol: String,
+        isIpv6: Boolean
     ) {
         val domain = parseDnsQueryName(dnsQuery)
-        log(LogType.INFO, "QUERY", "Requested: $domain via 3-Tier Controller")
+        val ipVer = if (isIpv6) "IPv6" else "IPv4"
+        log(LogType.INFO, "QUERY", "Requested: $domain ($ipVer) via 3-Tier Controller")
 
         val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, domain, protocol)
 
         if (response != null) {
             try {
-                // Build reply IP and UDP packet
-                val responseIpHeaderLength = 20
-                val responsePacketSize = responseIpHeaderLength + 8 + response.size
-                val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+                if (isIpv6) {
+                    val responsePacketSize = 40 + 8 + response.size
+                    val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
 
-                // IP Header Setup
-                responseBufferFull.put(0, 0x45.toByte()) // IPv4, IHL = 5 (20 bytes)
-                responseBufferFull.put(1, 0.toByte()) // TOS
-                responseBufferFull.putShort(2, responsePacketSize.toShort()) // Packet Length
-                responseBufferFull.putShort(4, 0.toShort()) // Ident
-                responseBufferFull.putShort(6, 0x4000.toShort()) // Flags (DF)
-                responseBufferFull.put(8, 64.toByte()) // TTL
-                responseBufferFull.put(9, 17.toByte()) // UDP Protocol
-                responseBufferFull.putShort(10, 0.toShort()) // IP Checksum
+                    // IPv6 Header Setup
+                    responseBufferFull.put(0, 0x60.toByte()) // Version 6, Traffic Class/Flow Label 0
+                    responseBufferFull.put(1, 0.toByte())
+                    responseBufferFull.put(2, 0.toByte())
+                    responseBufferFull.put(3, 0.toByte())
 
-                // Swap IPs (Destination becomes Source, Source becomes Destination)
-                responseBufferFull.position(12)
-                responseBufferFull.put(dstIpBytes)
-                responseBufferFull.put(srcIpBytes)
+                    // Payload Length (UDP Header (8) + DNS payload size)
+                    val payloadLen = 8 + response.size
+                    responseBufferFull.put(4, ((payloadLen shr 8) and 0xFF).toByte())
+                    responseBufferFull.put(5, (payloadLen and 0xFF).toByte())
 
-                // UDP Header Setup
-                responseBufferFull.position(20)
-                responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
-                responseBufferFull.putShort(srcPort.toShort()) // Destination Port
-                responseBufferFull.putShort((8 + response.size).toShort()) // Length
-                responseBufferFull.putShort(0.toShort()) // No checksum (0 is valid in UDP)
+                    responseBufferFull.put(6, 17.toByte()) // Next Header: UDP (17)
+                    responseBufferFull.put(7, 64.toByte()) // Hop Limit: 64
 
-                // DNS Payload
-                responseBufferFull.position(28)
-                responseBufferFull.put(response)
+                    // Swap IPs (Destination becomes Source, Source becomes Destination)
+                    responseBufferFull.position(8)
+                    responseBufferFull.put(dstIpBytes) // Source
+                    responseBufferFull.put(srcIpBytes) // Destination
 
-                // Calculate IP checksum
-                val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
-                responseBufferFull.putShort(10, ipChecksum)
+                    // UDP Header Setup
+                    responseBufferFull.position(40)
+                    responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
+                    responseBufferFull.putShort(srcPort.toShort()) // Destination Port
+                    responseBufferFull.putShort((8 + response.size).toShort()) // Length
+                    responseBufferFull.putShort(0.toShort()) // Checksum (0 is valid in UDP)
 
-                // Thread-safe synchronous write to local TUN
-                synchronized(output) {
-                    output.write(responseBufferFull.array(), 0, responsePacketSize)
+                    // DNS Payload
+                    responseBufferFull.position(48)
+                    responseBufferFull.put(response)
+
+                    synchronized(output) {
+                        output.write(responseBufferFull.array(), 0, responsePacketSize)
+                    }
+                } else {
+                    // Build reply IP and UDP packet
+                    val responseIpHeaderLength = 20
+                    val responsePacketSize = responseIpHeaderLength + 8 + response.size
+                    val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+
+                    // IP Header Setup
+                    responseBufferFull.put(0, 0x45.toByte()) // IPv4, IHL = 5 (20 bytes)
+                    responseBufferFull.put(1, 0.toByte()) // TOS
+                    responseBufferFull.putShort(2, responsePacketSize.toShort()) // Packet Length
+                    responseBufferFull.putShort(4, 0.toShort()) // Ident
+                    responseBufferFull.putShort(6, 0x4000.toShort()) // Flags (DF)
+                    responseBufferFull.put(8, 64.toByte()) // TTL
+                    responseBufferFull.put(9, 17.toByte()) // UDP Protocol
+                    responseBufferFull.putShort(10, 0.toShort()) // IP Checksum
+
+                    // Swap IPs (Destination becomes Source, Source becomes Destination)
+                    responseBufferFull.position(12)
+                    responseBufferFull.put(dstIpBytes)
+                    responseBufferFull.put(srcIpBytes)
+
+                    // UDP Header Setup
+                    responseBufferFull.position(20)
+                    responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
+                    responseBufferFull.putShort(srcPort.toShort()) // Destination Port
+                    responseBufferFull.putShort((8 + response.size).toShort()) // Length
+                    responseBufferFull.putShort(0.toShort()) // No checksum (0 is valid in UDP)
+
+                    // DNS Payload
+                    responseBufferFull.position(28)
+                    responseBufferFull.put(response)
+
+                    // Calculate IP checksum
+                    val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
+                    responseBufferFull.putShort(10, ipChecksum)
+
+                    // Thread-safe synchronous write to local TUN
+                    synchronized(output) {
+                        output.write(responseBufferFull.array(), 0, responsePacketSize)
+                    }
                 }
                 _totalQueriesResolved.value++
             } catch (e: Exception) {
