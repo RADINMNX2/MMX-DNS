@@ -120,11 +120,10 @@ class MultiPathManager(private val context: Context) {
             return false
         }
         return try {
-            val fileDesc = FileDescriptor()
-            val fdField = FileDescriptor::class.java.getDeclaredField("descriptor")
-            fdField.isAccessible = true
-            fdField.setInt(fileDesc, fd)
+            val pfd = android.os.ParcelFileDescriptor.fromFd(fd)
+            val fileDesc = pfd.fileDescriptor
             net.bindSocket(fileDesc)
+            pfd.close() // Close the dup file descriptor to prevent resource leaks
             Log.i(TAG, "Successfully bound socket FD $fd directly to Wi-Fi interface.")
             true
         } catch (e: Exception) {
@@ -143,11 +142,10 @@ class MultiPathManager(private val context: Context) {
             return false
         }
         return try {
-            val fileDesc = FileDescriptor()
-            val fdField = FileDescriptor::class.java.getDeclaredField("descriptor")
-            fdField.isAccessible = true
-            fdField.setInt(fileDesc, fd)
+            val pfd = android.os.ParcelFileDescriptor.fromFd(fd)
+            val fileDesc = pfd.fileDescriptor
             net.bindSocket(fileDesc)
+            pfd.close() // Close the dup file descriptor to prevent resource leaks
             Log.i(TAG, "Successfully bound socket FD $fd directly to Cellular interface.")
             true
         } catch (e: Exception) {

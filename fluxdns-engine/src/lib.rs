@@ -10,8 +10,8 @@ pub mod perf;
 pub mod telemetry;
 pub mod queue;
 
+use jni::objects::{JClass, JString, GlobalRef};
 use jni::JNIEnv;
-use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 use std::os::unix::io::RawFd;
 use std::sync::Mutex;
@@ -62,6 +62,8 @@ static ENGINE: Lazy<Mutex<EngineState>> = Lazy::new(|| Mutex::new(EngineState {
     protocol: String::new(),
 }));
 
+pub static FLUX_CLASS: Lazy<std::sync::RwLock<Option<GlobalRef>>> = Lazy::new(|| std::sync::RwLock::new(None));
+
 #[no_mangle]
 pub extern "system" fn Java_com_example_service_FluxDnsEngine_updateCellularMetricsNative(
     _env: JNIEnv,
@@ -90,8 +92,29 @@ pub static mut JVM: Option<jni::JavaVM> = None;
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _reserved: *mut libc::c_void) -> jint {
     unsafe {
-        JVM = Some(vm);
+        JVM = Some(vm.clone());
     }
+    
+    // Pre-cache the Class Reference inside the JNI_OnLoad callback running on the main Android Java thread.
+    // This allows us to invoke static Java methods from natively spawned background Tokio worker threads
+    // which do not have access to the custom application ClassLoader.
+    if let Ok(mut env) = vm.get_env() {
+        if let Ok(cls) = env.find_class("com/example/service/FluxDnsEngine") {
+            if let Ok(global_ref) = env.new_global_ref(cls) {
+                if let Ok(mut writer) = FLUX_CLASS.write() {
+                    *writer = Some(global_ref);
+                    log::info!("ZIBE JNI: Pre-cached FluxDnsEngine class reference successfully in JNI_OnLoad.");
+                }
+            } else {
+                log::error!("ZIBE JNI: Failed to create global ref for FluxDnsEngine class.");
+            }
+        } else {
+            log::error!("ZIBE JNI: Failed to find FluxDnsEngine class in JNI_OnLoad.");
+        }
+    } else {
+        log::error!("ZIBE JNI: Failed to acquire JNIEnv in JNI_OnLoad.");
+    }
+    
     jni::sys::JNI_VERSION_1_6
 }
 

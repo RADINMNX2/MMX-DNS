@@ -8,10 +8,11 @@ use tokio::time::Duration;
 use jni::sys::jint;
 use once_cell::sync::Lazy;
 
-// Reference to global JVM initialized in lib.rs
+// Reference to global JVM and Class cache initialized in lib.rs
 extern "C" {
     pub static mut JVM: Option<jni::JavaVM>;
 }
+use crate::FLUX_CLASS;
 
 /// Helper function to invoke JVM static method on FluxDnsEngine to bind a socket to Wi-Fi.
 pub fn bind_socket_to_wifi(fd: RawFd) -> bool {
@@ -25,21 +26,33 @@ pub fn bind_socket_to_wifi(fd: RawFd) -> bool {
         }
     };
 
-    let mut env = match jvm.attach_current_thread() {
+    // Attach as daemon so that the native thread is automatically detached when it exits
+    let mut env = match jvm.attach_current_thread_as_daemon() {
         Ok(env) => env,
         Err(e) => {
-            log::error!("AetherUDP Racing: Failed to attach thread to JVM: {:?}", e);
+            log::error!("AetherUDP Racing: Failed to attach thread to JVM as daemon: {:?}", e);
             return false;
         }
     };
 
-    let cls = match env.find_class("com/example/service/FluxDnsEngine") {
-        Ok(c) => c,
+    // Retrieve cached global class reference to bypass Android JNI background thread classloader limitation
+    let class_guard = match FLUX_CLASS.read() {
+        Ok(guard) => guard,
         Err(e) => {
-            log::error!("AetherUDP Racing: Failed to find FluxDnsEngine class: {:?}", e);
+            log::error!("AetherUDP Racing: Failed to acquire read lock on FLUX_CLASS: {:?}", e);
             return false;
         }
     };
+
+    let global_ref = match class_guard.as_ref() {
+        Some(r) => r,
+        None => {
+            log::error!("AetherUDP Racing: Cached class reference FLUX_CLASS is None.");
+            return false;
+        }
+    };
+
+    let cls = unsafe { jni::objects::JClass::from_raw(global_ref.as_obj().as_raw()) };
 
     let res = env.call_static_method(
         &cls,
@@ -52,6 +65,7 @@ pub fn bind_socket_to_wifi(fd: RawFd) -> bool {
         Ok(val) => val.z().unwrap_or(false),
         Err(e) => {
             log::error!("AetherUDP Racing: bindSocketToWifi JNI call failed: {:?}", e);
+            let _ = env.exception_clear();
             false
         }
     }
@@ -69,21 +83,33 @@ pub fn bind_socket_to_cellular(fd: RawFd) -> bool {
         }
     };
 
-    let mut env = match jvm.attach_current_thread() {
+    // Attach as daemon so that the native thread is automatically detached when it exits
+    let mut env = match jvm.attach_current_thread_as_daemon() {
         Ok(env) => env,
         Err(e) => {
-            log::error!("AetherUDP Racing: Failed to attach thread to JVM: {:?}", e);
+            log::error!("AetherUDP Racing: Failed to attach thread to JVM as daemon: {:?}", e);
             return false;
         }
     };
 
-    let cls = match env.find_class("com/example/service/FluxDnsEngine") {
-        Ok(c) => c,
+    // Retrieve cached global class reference to bypass Android JNI background thread classloader limitation
+    let class_guard = match FLUX_CLASS.read() {
+        Ok(guard) => guard,
         Err(e) => {
-            log::error!("AetherUDP Racing: Failed to find FluxDnsEngine class: {:?}", e);
+            log::error!("AetherUDP Racing: Failed to acquire read lock on FLUX_CLASS: {:?}", e);
             return false;
         }
     };
+
+    let global_ref = match class_guard.as_ref() {
+        Some(r) => r,
+        None => {
+            log::error!("AetherUDP Racing: Cached class reference FLUX_CLASS is None.");
+            return false;
+        }
+    };
+
+    let cls = unsafe { jni::objects::JClass::from_raw(global_ref.as_obj().as_raw()) };
 
     let res = env.call_static_method(
         &cls,
@@ -96,6 +122,7 @@ pub fn bind_socket_to_cellular(fd: RawFd) -> bool {
         Ok(val) => val.z().unwrap_or(false),
         Err(e) => {
             log::error!("AetherUDP Racing: bindSocketToCellular JNI call failed: {:?}", e);
+            let _ = env.exception_clear();
             false
         }
     }
