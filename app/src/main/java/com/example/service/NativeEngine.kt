@@ -11,8 +11,8 @@ class NativeEngine {
 
     companion object {
         private const val TAG = "NativeEngine"
-        private const val LIBRARY_NAME = "flux_dns_engine"
-        private const val FALLBACK_LIBRARY_NAME = "fluxdns" // Maintain compatibility with template naming
+        private const val LIBRARY_NAME = "fluxdns"
+        private const val FALLBACK_LIBRARY_NAME = "flux_dns_engine" // Maintain compatibility with template naming
 
         @Volatile
         private var isLoaded = false

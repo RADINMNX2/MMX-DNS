@@ -10,10 +10,12 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.example.MainActivity
+import com.example.util.DnsCacheFlusher
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -79,6 +81,7 @@ class DnsVpnService : VpnService() {
 
         const val ACTION_START = "com.example.service.START"
         const val ACTION_STOP = "com.example.service.STOP"
+        const val ACTION_NEXT_PROFILE = "com.example.service.NEXT_PROFILE"
 
         const val EXTRA_PRIMARY_DNS = "primary_dns"
         const val EXTRA_SECONDARY_DNS = "secondary_dns"
@@ -117,6 +120,10 @@ class DnsVpnService : VpnService() {
         fun clearLogs() {
             _logs.value = emptyList()
         }
+
+        @Volatile
+        var instance: DnsVpnService? = null
+            private set
 
         @Volatile
         var isRunning = false
@@ -237,13 +244,15 @@ class DnsVpnService : VpnService() {
     private val resolverController by lazy {
         FluxResolverController(
             context = applicationContext,
-            cronetDohResolver = cronetDohResolver,
+            resolveViaDoH = { query, ip -> resolveViaDoH(query, ip) },
+            resolveViaDoT = { query, ip -> resolveViaDoT(query, ip) },
             protectSocket = { socket -> protect(socket) }
         )
     }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
     }
 
@@ -252,6 +261,9 @@ class DnsVpnService : VpnService() {
         if (action == ACTION_STOP) {
             stopVpn()
             return START_NOT_STICKY
+        } else if (action == ACTION_NEXT_PROFILE) {
+            switchNextProfile()
+            return START_STICKY
         } else if (action == ACTION_START) {
             val primary = intent.getStringExtra(EXTRA_PRIMARY_DNS) ?: "8.8.8.8"
             val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: "8.8.4.4"
@@ -264,6 +276,9 @@ class DnsVpnService : VpnService() {
 
     override fun onDestroy() {
         stopVpn()
+        if (instance === this) {
+            instance = null
+        }
         super.onDestroy()
     }
 
@@ -379,6 +394,10 @@ class DnsVpnService : VpnService() {
 
                 _state.value = VpnState.CONNECTED
                 Log.i(TAG, "VPN tunnel established successfully. Native active: ${FluxDnsEngine.isNativeAvailable}")
+                
+                // Flush both standard JVM and system browser/webview caches
+                DnsCacheFlusher.flushAll(applicationContext)
+                log(LogType.SUCCESS, "CACHE", "System and browser/webview DNS caches successfully flushed.")
 
                 if (FluxDnsEngine.isNativeAvailable) {
                     log(LogType.SUCCESS, "ENGINE", "Native JNI engine successfully bound to TUN interface.")
@@ -419,6 +438,40 @@ class DnsVpnService : VpnService() {
         }
     }
 
+    private fun switchNextProfile() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val db = com.example.data.DnsDatabase.getDatabase(this@DnsVpnService)
+                val profiles = db.dnsProfileDao().getAllProfiles().first()
+                if (profiles.isNotEmpty()) {
+                    val currentName = _activeProfileName.value
+                    val currentIndex = profiles.indexOfFirst { it.name == currentName }
+                    val nextIndex = if (currentIndex == -1 || currentIndex == profiles.lastIndex) 0 else currentIndex + 1
+                    val nextProfile = profiles[nextIndex]
+                    
+                    log(LogType.INFO, "HOTSWAP", "Hot-swapping profile dynamically: ${nextProfile.name}")
+                    
+                    withContext(Dispatchers.Main) {
+                        val intent = Intent(this@DnsVpnService, DnsVpnService::class.java).apply {
+                            action = ACTION_START
+                            putExtra(EXTRA_PRIMARY_DNS, nextProfile.primaryDns)
+                            putExtra(EXTRA_SECONDARY_DNS, nextProfile.secondaryDns)
+                            putExtra(EXTRA_PROFILE_NAME, nextProfile.name)
+                            putExtra(EXTRA_PROTOCOL, "UDP") // Defaulting to standard UDP for notifications-driven swap
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in dynamic profile hot-swap", e)
+            }
+        }
+    }
+
     private fun stopVpn() {
         if (!isRunning) return
         isRunning = false
@@ -455,12 +508,14 @@ class DnsVpnService : VpnService() {
         
 
         serviceScope.cancel()
-
-        flushSystemDnsCache()
-        log(LogType.INFO, "CACHE", "System DNS resolution cache programmatically flushed.")
+        
+        // Flush standard JVM, webview, and process network routing descriptor caches
+        DnsCacheFlusher.flushAll(applicationContext)
+        log(LogType.SUCCESS, "CACHE", "System DNS resolution cache programmatically flushed.")
 
         stopForeground(true)
         log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully. Default system DNS restored.")
+        stopSelf()
     }
 
     private suspend fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
@@ -581,7 +636,7 @@ class DnsVpnService : VpnService() {
         val domain = parseDnsQueryName(dnsQuery)
         log(LogType.INFO, "QUERY", "Requested: $domain via 3-Tier Controller")
 
-        val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, domain)
+        val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, domain, protocol)
 
         if (response != null) {
             try {
@@ -848,19 +903,50 @@ class DnsVpnService : VpnService() {
             )
         }
 
+        val stopIntent = Intent(this, DnsVpnService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 1, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val switchIntent = Intent(this, DnsVpnService::class.java).apply {
+            action = ACTION_NEXT_PROFILE
+        }
+        val switchPendingIntent = PendingIntent.getService(
+            this, 2, switchIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
             Notification.Builder(this)
         }
 
-        return builder
-            .setContentTitle("DNS Changer Connected")
-            .setContentText("Profile: $profileName ($dnsDetails)")
+        builder
+            .setContentTitle("DNS Shield Connected")
+            .setContentText("Profile: $profileName | $dnsDetails")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .build()
+
+        // Add Disconnect Action
+        builder.addAction(
+            android.R.drawable.ic_menu_close_clear_cancel,
+            "Disconnect",
+            stopPendingIntent
+        )
+
+        // Add Next Profile Action
+        builder.addAction(
+            android.R.drawable.ic_menu_compass,
+            "Next Profile",
+            switchPendingIntent
+        )
+
+        return builder.build()
     }
 
     private fun createNotificationChannel() {

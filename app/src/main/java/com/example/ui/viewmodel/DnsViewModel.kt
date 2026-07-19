@@ -267,7 +267,7 @@ class DnsViewModel(
                             putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, nextProfile.primaryDns)
                             putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, nextProfile.secondaryDns)
                             putExtra(DnsVpnService.EXTRA_PROFILE_NAME, nextProfile.name)
-                            putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                            putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
                         }
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             context.startForegroundService(intent)
@@ -315,7 +315,7 @@ class DnsViewModel(
                         putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, primary)
                         putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, secondary)
                         putExtra(DnsVpnService.EXTRA_PROFILE_NAME, name)
-                        putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoH" else "UDP")
+                        putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
                     }
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         context.startForegroundService(intent)
@@ -362,14 +362,21 @@ class DnsViewModel(
             try {
                 val startTime = System.currentTimeMillis()
                 val address = InetAddress.getByName(targetServer)
-                socket = DatagramSocket()
-                socket.soTimeout = 1500 // 1.5 seconds timeout
-
+                
+                // Create an unbound socket to protect it before binding
+                socket = DatagramSocket(null)
+                
                 // Protect socket to bypass VPN if VPN is currently active
-                if (vpnState.value == VpnState.CONNECTED) {
-                    // Note: In normal JVM, we don't need to protect if we are just verifying external,
-                    // but we protect to ensure standard routing. We can use standard socket protect.
+                DnsVpnService.instance?.let { vpnService ->
+                    val protected = vpnService.protect(socket)
+                    Log.d("DnsViewModel", "Ping socket bypass protected: $protected")
+                } ?: run {
+                    Log.d("DnsViewModel", "VPN Service instance not running; skipping socket protection")
                 }
+                
+                // Bind to ephemeral local port and apply configuration
+                socket.bind(null)
+                socket.soTimeout = 1500 // 1.5 seconds timeout
 
                 val requestPacket = DatagramPacket(dnsQueryBytes, dnsQueryBytes.size, address, 53)
                 socket.send(requestPacket)

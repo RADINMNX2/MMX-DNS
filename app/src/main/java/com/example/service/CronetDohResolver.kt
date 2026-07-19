@@ -52,7 +52,7 @@ class CronetDohResolver(private val context: Context) {
             val host = uri.host ?: return serverUrl
             val ip = when (host) {
                 "dns.google" -> "8.8.8.8"
-                "cloudflare-dns.com", "one.one.one.one" -> "1.1.1.3" // Defaulting to security-focused family endpoint
+                "cloudflare-dns.com", "one.one.one.one" -> "1.1.1.1" // Use standard ultra-fast 1.1.1.1 instead of blocked 1.1.1.3
                 "dns.quad9.net" -> "9.9.9.9"
                 "dns.adguard-dns.com", "dns.adguard.com" -> "94.140.14.14"
                 "dns.controld.com" -> "76.76.2.0"

@@ -157,3 +157,87 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
+
+// Define an abstract, configuration-cache compliant task class to compile the Rust engine using cargo-ndk
+abstract class CompileRustTask : DefaultTask() {
+    @get:InputDirectory
+    abstract val cargoDir: org.gradle.api.file.DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val jniLibsDir: org.gradle.api.file.DirectoryProperty
+
+    @TaskAction
+    fun compile() {
+        val cargoDirFile = cargoDir.get().asFile
+        val jniLibsDirFile = jniLibsDir.get().asFile
+        
+        val cargoExecutable = try {
+            val process = ProcessBuilder("which", "cargo").start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            if (process.exitValue() == 0) output else null
+        } catch (e: Exception) {
+            null
+        }
+
+        if (cargoExecutable != null) {
+            println("Cargo found at: $cargoExecutable. Initiating Rust compilation via cargo-ndk...")
+            
+            val process = ProcessBuilder(
+                "cargo", "ndk",
+                "-t", "arm64-v8a",
+                "-t", "armeabi-v7a",
+                "build",
+                "--release"
+            )
+                .directory(cargoDirFile)
+                .redirectErrorStream(true)
+                .start()
+            
+            process.inputStream.bufferedReader().forEachLine { println("[Cargo] $it") }
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw org.gradle.api.GradleException("Rust compilation failed with exit code: $exitCode")
+            }
+            
+            // Map target triples to Android ABI directory structures
+            val targets = mapOf(
+                "aarch64-linux-android" to "arm64-v8a",
+                "armv7-linux-androideabi" to "armeabi-v7a"
+            )
+            
+            val cargoTargetDir = cargoDirFile.resolve("target")
+            
+            targets.forEach { (cargoTarget, androidAbi) ->
+                val sourceFile = cargoTargetDir.resolve("$cargoTarget/release/libfluxdns.so")
+                val destDir = jniLibsDirFile.resolve(androidAbi)
+                val destFile = destDir.resolve("libfluxdns.so")
+                
+                if (sourceFile.exists()) {
+                    destDir.mkdirs()
+                    sourceFile.copyTo(destFile, overwrite = true)
+                    println("Successfully injected compiled binary: $sourceFile -> $destFile")
+                } else {
+                    println("WARNING: Expected Rust binary was not found at $sourceFile")
+                }
+            }
+            println("Rust compilation and output injection completed successfully!")
+        } else {
+            println("WARNING: 'cargo' not found in system PATH. Skipping Rust compilation and using precompiled jniLibs in build environment.")
+        }
+    }
+}
+
+// Register the custom task and configure its inputs and outputs using directory properties
+val compileRust = tasks.register<CompileRustTask>("compileRust") {
+    group = "build"
+    description = "Compiles the Rust fluxdns-engine using cargo-ndk"
+    cargoDir.set(layout.projectDirectory.dir("../fluxdns-engine"))
+    jniLibsDir.set(layout.projectDirectory.dir("src/main/jniLibs"))
+}
+
+// Wire the custom compileRust task into the standard Android lifecycle
+tasks.named("preBuild") {
+    dependsOn(compileRust)
+}
+
