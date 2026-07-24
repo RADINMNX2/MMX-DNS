@@ -14,6 +14,8 @@ on:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     env:
       STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
@@ -145,3 +147,85 @@ jobs:
           path: build-artifacts/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Extract App Version
+        id: get_version
+        run: |
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "1.0")
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts || echo "1")
+          TAG_NAME="v${VERSION_NAME}"
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Resolved Release Tag: $TAG_NAME (Version Code: $VERSION_CODE)"
+
+      - name: Prepare Release Binaries
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p release-binaries
+          TAG="${{ steps.get_version.outputs.tag_name }}"
+          
+          # Copy release APK if available
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk "release-binaries/MNX-FluxDNS-${TAG}-release.apk"
+          elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "release-binaries/MNX-FluxDNS-${TAG}-release.apk"
+          fi
+
+          # Copy debug APK if available
+          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk "release-binaries/MNX-FluxDNS-${TAG}-debug.apk"
+          fi
+
+          # Fallback copy if paths differ
+          if [ -z "$(ls -A release-binaries)" ]; then
+            find app/build/outputs/apk/ -name "*.apk" -exec cp {} release-binaries/ \;
+          fi
+
+          echo "Binaries prepared for release:"
+          ls -la release-binaries/
+
+      - name: Publish or Update GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.get_version.outputs.tag_name }}
+          VERSION_NAME: ${{ steps.get_version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.get_version.outputs.version_code }}
+        run: |
+          echo "Checking if GitHub Release $TAG_NAME already exists..."
+          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            echo "⚡ Release $TAG_NAME already exists! Deleting previous release & tag to replace with updated build..."
+            gh release delete "$TAG_NAME" --cleanup-tag -y || true
+            git push --delete origin "$TAG_NAME" 2>/dev/null || true
+          else
+            echo "✨ Creating new release for version $TAG_NAME..."
+          fi
+
+          RELEASE_BODY=$(cat << 'EOF'
+          # ⚡ MNX FluxDNS Engine — Release
+
+          Welcome to the official build release of **MNX FluxDNS**! Built with an ultra-fast Rust native engine, dual-stack DNS racing, and military-grade network anti-censorship.
+
+          ### 🌟 Key Highlights & Engineering Features
+          - 🚀 **Rust Native Engine (`libfluxdns.so`)**: Zero-allocation UDP socket racing with memory pooling and CoDel congestion control.
+          - ⚡ **Dual-Stack IPv4 / IPv6 DNS**: Full support for both IPv4 and compressed/uncompressed IPv6 addresses with dynamic validation.
+          - 🌐 **Multi-Protocol Acceleration**: Integrated DoH (DNS-over-HTTPS), DoT, and DoQ (DNS-over-QUIC) via Cronet & Rust sockets.
+          - 🎮 **Gaming & Anti-Censorship Shield**: Dedicated lower latency routing and custom DNS profiles (Server 1 through 6).
+          - 📊 **Real-time Telemetry & Diagnostics**: Live cell network monitoring, latency tracking, and packet inspection.
+
+          ---
+          ### 📦 Downloadable Assets
+          - **`MNX-FluxDNS-v*.apk`**: Production release build.
+          - **`MNX-FluxDNS-v*-debug.apk`**: Debug build for developer testing and log inspection.
+
+          ---
+          *Automated Release created by GitHub Actions CI/CD Pipeline.*
+          EOF
+          )
+
+          gh release create "$TAG_NAME" release-binaries/*.apk \
+            --title "⚡ MNX FluxDNS $TAG_NAME (Build $VERSION_CODE)" \
+            --notes "$RELEASE_BODY" \
+            --latest
+

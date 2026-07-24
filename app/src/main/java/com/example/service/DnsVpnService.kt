@@ -231,8 +231,9 @@ class DnsVpnService : VpnService() {
                     }
                 }
                 try {
-                    if (hostname.matches(Regex("^[0-9.]+$"))) {
-                        return listOf(InetAddress.getByName(hostname))
+                    val cleanHost = hostname.trim()
+                    if (cleanHost.matches(Regex("^[0-9.]+$")) || cleanHost.contains(":")) {
+                        return listOf(InetAddress.getByName(cleanHost))
                     }
                 } catch (e: Exception) {}
                 return okhttp3.Dns.SYSTEM.lookup(hostname)

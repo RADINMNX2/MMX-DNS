@@ -83,12 +83,72 @@ abstract class DnsDatabase : RoomDatabase() {
                             )
                             dao.insertProfile(
                                 DnsProfile(
-                                    name = "Electro DNS",
-                                    primaryDns = "78.157.42.100",
+                                    name = "Electro Server 1",
+                                    primaryDns = "78.157.42.101",
+                                    secondaryDns = "50.118.234.125",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::3b03:c76c:4072:265:8cdd:98c7",
+                                    secondaryIpv6 = "32c4::b51e:bdb9:14f1:fe7b:457:ee1e",
+                                    isDefault = false,
+                                    isCustom = false
+                                )
+                            )
+                            dao.insertProfile(
+                                DnsProfile(
+                                    name = "Electro Server 2",
+                                    primaryDns = "78.157.42.101",
+                                    secondaryDns = "50.237.19.44",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::7d2b:4f84:eb51:9b32:a5d4:146d",
+                                    secondaryIpv6 = "32c4::11a4:7c1e:ee5d:30a3:277:a655",
+                                    isDefault = false,
+                                    isCustom = false
+                                )
+                            )
+                            dao.insertProfile(
+                                DnsProfile(
+                                    name = "Electro Server 3",
+                                    primaryDns = "78.157.42.101",
+                                    secondaryDns = "50.50.6.128",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::a900:40d9:d76:9bf0:9e43:b5de",
+                                    secondaryIpv6 = "32c4::190b:c3f6:f22b:f571:d0b5:ad88",
+                                    isDefault = false,
+                                    isCustom = false
+                                )
+                            )
+                            dao.insertProfile(
+                                DnsProfile(
+                                    name = "Electro Server 4",
+                                    primaryDns = "50.178.68.110",
                                     secondaryDns = "78.157.42.101",
-                                    enableIpv6 = false,
-                                    primaryIpv6 = "",
-                                    secondaryIpv6 = "",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::9e17:fb6e:a7d5:614c:6bb4:7a3a",
+                                    secondaryIpv6 = "32c4::884f:9cc3:4138:c637:ddec:2722",
+                                    isDefault = false,
+                                    isCustom = false
+                                )
+                            )
+                            dao.insertProfile(
+                                DnsProfile(
+                                    name = "Electro Server 5",
+                                    primaryDns = "50.36.116.57",
+                                    secondaryDns = "78.157.42.101",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::f231:c414:b594:d527:4fd1:874b",
+                                    secondaryIpv6 = "32c4::eaab:3600:d3e2:6b85:fead:f77f",
+                                    isDefault = false,
+                                    isCustom = false
+                                )
+                            )
+                            dao.insertProfile(
+                                DnsProfile(
+                                    name = "Electro Server 6",
+                                    primaryDns = "50.148.94.173",
+                                    secondaryDns = "78.157.42.101",
+                                    enableIpv6 = true,
+                                    primaryIpv6 = "32c4::df37:e2cd:a3d:b0f4:a6d0:e0d7",
+                                    secondaryIpv6 = "32c4::2a01:386c:cdd7:dabf:3a45:7bb9",
                                     isDefault = false,
                                     isCustom = false
                                 )

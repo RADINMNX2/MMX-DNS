@@ -91,15 +91,50 @@ fun ProfileScreen(
 
     // Helper functions for IP validation
     fun isValidIpv4(ip: String): Boolean {
-        if (ip.trim().isEmpty()) return false
+        val clean = ip.trim().replace("\\s+".toRegex(), "")
+        if (clean.isEmpty()) return false
         val ipv4Regex = """^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$""".toRegex()
-        return ipv4Regex.matches(ip.trim())
+        return ipv4Regex.matches(clean)
+    }
+
+    fun isValidH16(segment: String): Boolean {
+        if (segment.isEmpty() || segment.length > 4) return false
+        return segment.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
     }
 
     fun isValidIpv6(ip: String): Boolean {
-        if (ip.trim().isEmpty()) return false
-        val ipv6Regex = """^(?:[0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,7}:$|^::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$""".toRegex()
-        return ipv6Regex.matches(ip.trim())
+        val clean = ip.trim().replace("\\s+".toRegex(), "")
+        if (clean.isEmpty()) return false
+
+        // A valid IPv6 address can have at most one "::"
+        val doubleColonCount = clean.windowed(2).count { it == "::" }
+        if (doubleColonCount > 1) return false
+
+        val isCompressed = doubleColonCount == 1
+
+        if (isCompressed) {
+            val parts = clean.split("::")
+            if (parts.size > 2) return false
+
+            val leftStr = parts[0]
+            val rightStr = parts[1]
+
+            val leftSegments = if (leftStr.isEmpty()) emptyList() else leftStr.split(":")
+            val rightSegments = if (rightStr.isEmpty()) emptyList() else rightStr.split(":")
+
+            // Total segments in compressed IPv6 must be <= 7
+            if (leftSegments.size + rightSegments.size > 7) return false
+
+            val isLeftValid = leftSegments.all { isValidH16(it) }
+            val isRightValid = rightSegments.all { isValidH16(it) }
+
+            return isLeftValid && isRightValid
+        } else {
+            // Standard uncompressed IPv6: exactly 8 segments separated by single colons
+            val segments = clean.split(":")
+            if (segments.size != 8) return false
+            return segments.all { isValidH16(it) }
+        }
     }
 
     fun handleSave() {
