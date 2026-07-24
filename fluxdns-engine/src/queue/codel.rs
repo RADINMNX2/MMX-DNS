@@ -80,7 +80,7 @@ impl CodelQueue {
     pub fn new() -> Self {
         Self {
             queue: VecDeque::new(),
-            target: Duration::from_millis(5),      // CoDel 5ms target delay
+            target: Duration::from_millis(3),      // CoDel 3ms gaming target delay
             interval: Duration::from_millis(100),  // 100ms sliding window
             first_above_time: None,
             dropping: false,

@@ -118,21 +118,24 @@ class DnsVpnService : VpnService() {
         private val _totalQueriesFiltered = MutableStateFlow(0)
         val totalQueriesFiltered: StateFlow<Int> = _totalQueriesFiltered.asStateFlow()
 
+        private val logBuffer = java.util.ArrayDeque<DnsLogEntry>(300)
         private val _logs = MutableStateFlow<List<DnsLogEntry>>(emptyList())
         val logs: StateFlow<List<DnsLogEntry>> = _logs.asStateFlow()
 
+        @Synchronized
         fun log(type: LogType, tag: String, message: String) {
             val entry = DnsLogEntry(type = type, tag = tag, message = message)
-            val current = _logs.value.toMutableList()
-            current.add(0, entry)
-            if (current.size > 200) {
-                current.removeAt(current.lastIndex)
+            logBuffer.addFirst(entry)
+            if (logBuffer.size > 250) {
+                logBuffer.removeLast()
             }
-            _logs.value = current
+            _logs.value = logBuffer.toList()
             Log.d(TAG, "[$type] $tag: $message")
         }
 
+        @Synchronized
         fun clearLogs() {
+            logBuffer.clear()
             _logs.value = emptyList()
         }
 

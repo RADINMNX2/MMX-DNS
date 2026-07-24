@@ -75,8 +75,14 @@ impl AetherFecDecoder {
                     continue;
                 }
                 let src_packet = &subset[j].1;
-                for b in 0..packet_size {
-                    target_packet[b] = gf_add(target_packet[b], gf_mul(src_packet[b], factor));
+                if factor == 1 {
+                    for b in 0..packet_size {
+                        target_packet[b] ^= src_packet[b];
+                    }
+                } else {
+                    for b in 0..packet_size {
+                        target_packet[b] = gf_add(target_packet[b], gf_mul(src_packet[b], factor));
+                    }
                 }
             }
         }

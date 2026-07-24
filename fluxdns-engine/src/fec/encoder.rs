@@ -54,9 +54,15 @@ impl AetherFecEncoder {
                 }
                 let data_packet = &data_packets[j];
                 
-                // Low-overhead assembly loop
-                for b in 0..packet_size {
-                    parity_packet[b] = gf_add(parity_packet[b], gf_mul(data_packet[b], factor));
+                // Fast path for factor == 1 (Direct XOR without GF log/exp lookup)
+                if factor == 1 {
+                    for b in 0..packet_size {
+                        parity_packet[b] ^= data_packet[b];
+                    }
+                } else {
+                    for b in 0..packet_size {
+                        parity_packet[b] = gf_add(parity_packet[b], gf_mul(data_packet[b], factor));
+                    }
                 }
             }
         }
