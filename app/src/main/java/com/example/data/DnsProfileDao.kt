@@ -8,6 +8,9 @@ interface DnsProfileDao {
     @Query("SELECT * FROM dns_profiles ORDER BY id ASC")
     fun getAllProfiles(): Flow<List<DnsProfile>>
 
+    @Query("SELECT * FROM dns_profiles ORDER BY id ASC")
+    suspend fun getAllProfilesList(): List<DnsProfile>
+
     @Query("SELECT * FROM dns_profiles WHERE isDefault = 1 LIMIT 1")
     suspend fun getDefaultProfile(): DnsProfile?
 

@@ -9,6 +9,10 @@ data class DnsProfile(
     val name: String,
     val primaryDns: String,
     val secondaryDns: String,
+    val enableIpv6: Boolean = false,
+    val primaryIpv6: String = "",
+    val secondaryIpv6: String = "",
     val isDefault: Boolean = false,
     val isCustom: Boolean = true
 )
+

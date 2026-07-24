@@ -54,8 +54,6 @@ fun DashboardScreen(
     isPinging: Boolean,
     totalQueriesResolved: Int,
     connectionUptime: String,
-    isTurboEnabled: Boolean,
-    onToggleTurbo: (Boolean) -> Unit,
     onToggleVpn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -763,70 +761,6 @@ fun DashboardScreen(
                                 modifier = Modifier.weight(1f)
                             )
                         }
-                    }
-                }
-
-                // Row 3: Turbo Flow Switch Panel
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0x66080C16)),
-                    border = BorderStroke(1.dp, Color(0x0AFFFFFF))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp)
-                            .clickable { onToggleTurbo(!isTurboEnabled) },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(
-                                        if (isTurboEnabled) Color(0x2200F0FF) else Color(0xFF131724),
-                                        RoundedCornerShape(8.dp)
-                                    )
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Speed,
-                                    contentDescription = "Turbo Flow speed",
-                                    tint = if (isTurboEnabled) Color(0xFF00F0FF) else Color(0xFF4C5D7E),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = "MNX TURBO FLOW",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.4f),
-                                    letterSpacing = 1.sp
-                                )
-                                Text(
-                                    text = if (isTurboEnabled) "Optimized Dual-stack IPv4/IPv6" else "Standard DNS Mode",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isTurboEnabled) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.7f)
-                                )
-                            }
-                        }
-
-                        Switch(
-                            checked = isTurboEnabled,
-                            onCheckedChange = { onToggleTurbo(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF04060A),
-                                checkedTrackColor = Color(0xFF00F0FF),
-                                uncheckedThumbColor = Color(0xFF4C5D7E),
-                                uncheckedTrackColor = Color(0xFF131724)
-                            ),
-                            modifier = Modifier.testTag("turbo_switch")
-                        )
                     }
                 }
             }

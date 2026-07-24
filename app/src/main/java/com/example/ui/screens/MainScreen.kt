@@ -77,7 +77,6 @@ fun MainScreen(
     val gamingApps by viewModel.allGamingApps.collectAsStateWithLifecycle()
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
-    val isTurboEnabled by viewModel.isTurboEnabled.collectAsStateWithLifecycle()
     val isGamingShieldEnabled by viewModel.isGamingShieldEnabled.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
@@ -272,8 +271,6 @@ fun MainScreen(
                         isPinging = isPinging,
                         totalQueriesResolved = totalQueriesResolved,
                         connectionUptime = connectionUptime,
-                        isTurboEnabled = isTurboEnabled,
-                        onToggleTurbo = { viewModel.setTurboEnabled(it) },
                         onToggleVpn = {
                             val vpnPrepareIntent = VpnService.prepare(context)
                             if (vpnPrepareIntent != null) {
@@ -303,8 +300,8 @@ fun MainScreen(
                         currentSelectedId = selectedProfile?.id,
                         onSelectProfile = { viewModel.selectProfile(it) },
                         onDeleteProfile = { viewModel.deleteProfile(it) },
-                        onSaveProfile = { id, name, primary, secondary, isDefault, isCustom, onComplete ->
-                            viewModel.saveProfile(id, name, primary, secondary, isDefault, isCustom, onComplete)
+                        onSaveProfile = { id, name, primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, isDefault, isCustom, onComplete ->
+                            viewModel.saveProfile(id, name, primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, isDefault, isCustom, onComplete)
                         }
                     )
                 }

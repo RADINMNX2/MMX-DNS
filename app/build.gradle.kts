@@ -13,7 +13,7 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
   defaultConfig {
-    applicationId = "com.aistudio.vpn.hxpfbq"
+    applicationId = "com.mnx.dns"
     minSdk = 24
     targetSdk = 36
     versionCode = 1

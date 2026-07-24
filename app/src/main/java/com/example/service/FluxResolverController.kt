@@ -39,12 +39,19 @@ class FluxResolverController(
      * Executes the sequential 3-tier cascade resolution pipeline for an incoming DNS query packet.
      * Guaranteed to operate on a background dispatcher (Dispatchers.IO) to prevent blocking.
      */
+    /**
+     * Executes the sequential 3-tier cascade resolution pipeline for an incoming DNS query packet.
+     * Guaranteed to operate on a background dispatcher (Dispatchers.IO) to prevent blocking.
+     */
     suspend fun resolve(
         dnsQuery: ByteArray,
         primaryDns: String,
         secondaryDns: String,
-        domain: String,
-        protocol: String
+        enableIpv6: Boolean = false,
+        primaryIpv6: String = "",
+        secondaryIpv6: String = "",
+        domain: String = "unknown",
+        protocol: String = "UDP"
     ): ByteArray? = withContext(Dispatchers.IO) {
         var response: ByteArray? = null
 
@@ -54,14 +61,24 @@ class FluxResolverController(
         if (FluxDnsEngine.isNativeAvailable) {
             DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 1: Querying Native Rust JNI Engine via $protocol for '$domain'...")
             try {
+                // If IPv6 is enabled and valid, try IPv6 native target first, then IPv4
+                val activePrimary = if (enableIpv6 && primaryIpv6.isNotEmpty()) primaryIpv6 else primaryDns
+                val activeSecondary = if (enableIpv6 && secondaryIpv6.isNotEmpty()) secondaryIpv6 else secondaryDns
                 response = withTimeoutOrNull(TIER1_TIMEOUT_MS) {
-                    FluxDnsEngine.resolveQuery(dnsQuery, primaryDns, secondaryDns, protocol)
+                    FluxDnsEngine.resolveQuery(dnsQuery, activePrimary, activeSecondary, protocol)
                 }
                 if (response != null && response.isNotEmpty()) {
                     DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved '$domain' via Native JNI.")
                     return@withContext response
-                } else {
-                    DnsVpnService.log(LogType.WARNING, "RESOLVER", "Tier 1: Native JNI returned empty response or timed out. Cascading to JVM fallbacks...")
+                } else if (enableIpv6 && activePrimary != primaryDns) {
+                    // Fallback Native query on IPv4
+                    response = withTimeoutOrNull(TIER1_TIMEOUT_MS) {
+                        FluxDnsEngine.resolveQuery(dnsQuery, primaryDns, secondaryDns, protocol)
+                    }
+                    if (response != null && response.isNotEmpty()) {
+                        DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved '$domain' via Native JNI (IPv4 Fallback).")
+                        return@withContext response
+                    }
                 }
             } catch (e: TimeoutCancellationException) {
                 DnsVpnService.log(LogType.WARNING, "RESOLVER", "Tier 1: JNI timed out after ${TIER1_TIMEOUT_MS}ms. Cascading to JVM fallbacks...")
@@ -72,59 +89,47 @@ class FluxResolverController(
         }
 
         // =====================================================================
-        // TIER 2 & TIER 3: Intelligent Cascades Based on Chosen Protocol
+        // TIER 2 & TIER 3: Intelligent Dual-Stack Cascades Based on Chosen Protocol
         // =====================================================================
         when (protocol) {
             "DoQ" -> {
-                // Prioritize pure Kotlin DNS-over-QUIC (DoQ) backup client
-                response = tryResolveDoQ(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoQ(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Fallback 1: DoH (via OkHttp, which has automatic socket protection)
-                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Fallback 2: DoT
-                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Ultimate fallback: Plain UDP Racing
-                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
             }
             "DoH" -> {
-                // Prioritize DoH (via OkHttp, which has automatic socket protection)
-                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Fallback to DoT
-                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Ultimate fallback to Plain UDP Racing
-                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
             }
             "DoT" -> {
-                // Prioritize DoT
-                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Fallback to DoH
-                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Ultimate fallback to Plain UDP Racing
-                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
             }
             else -> {
-                // UDP Mode (Standard DNS): Execute UDP Racing first (Instant, no secure protocol handshake overhead)
-                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
 
-                // Secondary backup secure query in case UDP is highly throttled or experiencing packet loss
-                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, domain)
+                response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
                 if (response != null) return@withContext response
             }
         }
@@ -136,17 +141,24 @@ class FluxResolverController(
         dnsQuery: ByteArray,
         primaryDns: String,
         secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
         domain: String
     ): ByteArray? {
         DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2: Resolving '$domain' via Secure DNS-over-QUIC (DoQ)...")
-        var response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-            doqClient.resolve(dnsQuery, primaryDns)
+        var response: ByteArray? = null
+        if (enableIpv6 && primaryIpv6.isNotEmpty()) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { doqClient.resolve(dnsQuery, primaryIpv6) }
+            if (response == null && secondaryIpv6.isNotEmpty()) {
+                response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { doqClient.resolve(dnsQuery, secondaryIpv6) }
+            }
+        }
+        if (response == null) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { doqClient.resolve(dnsQuery, primaryDns) }
         }
         if (response == null && secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-            DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2 DoQ: Primary failed. Trying secondary DNS ($secondaryDns)...")
-            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-                doqClient.resolve(dnsQuery, secondaryDns)
-            }
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { doqClient.resolve(dnsQuery, secondaryDns) }
         }
         if (response != null && response.isNotEmpty()) {
             DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 2 DoQ: Successfully resolved '$domain'")
@@ -159,17 +171,24 @@ class FluxResolverController(
         dnsQuery: ByteArray,
         primaryDns: String,
         secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
         domain: String
     ): ByteArray? {
         DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2: Resolving '$domain' via Secure DNS-over-HTTPS (DoH)...")
-        var response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-            resolveViaDoH(dnsQuery, primaryDns)
+        var response: ByteArray? = null
+        if (enableIpv6 && primaryIpv6.isNotEmpty()) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoH(dnsQuery, primaryIpv6) }
+            if (response == null && secondaryIpv6.isNotEmpty()) {
+                response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoH(dnsQuery, secondaryIpv6) }
+            }
+        }
+        if (response == null) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoH(dnsQuery, primaryDns) }
         }
         if (response == null && secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-            DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2 DoH: Primary failed. Trying secondary DNS ($secondaryDns)...")
-            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-                resolveViaDoH(dnsQuery, secondaryDns)
-            }
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoH(dnsQuery, secondaryDns) }
         }
         if (response != null && response.isNotEmpty()) {
             DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 2 DoH: Successfully resolved '$domain'")
@@ -182,17 +201,24 @@ class FluxResolverController(
         dnsQuery: ByteArray,
         primaryDns: String,
         secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
         domain: String
     ): ByteArray? {
         DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2: Resolving '$domain' via Secure DNS-over-TLS (DoT)...")
-        var response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-            resolveViaDoT(dnsQuery, primaryDns)
+        var response: ByteArray? = null
+        if (enableIpv6 && primaryIpv6.isNotEmpty()) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoT(dnsQuery, primaryIpv6) }
+            if (response == null && secondaryIpv6.isNotEmpty()) {
+                response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoT(dnsQuery, secondaryIpv6) }
+            }
+        }
+        if (response == null) {
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoT(dnsQuery, primaryDns) }
         }
         if (response == null && secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-            DnsVpnService.log(LogType.INFO, "RESOLVER", "Tier 2 DoT: Primary failed. Trying secondary DNS ($secondaryDns)...")
-            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) {
-                resolveViaDoT(dnsQuery, secondaryDns)
-            }
+            response = withTimeoutOrNull(TIER2_TIMEOUT_MS) { resolveViaDoT(dnsQuery, secondaryDns) }
         }
         if (response != null && response.isNotEmpty()) {
             DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 2 DoT: Successfully resolved '$domain'")
@@ -205,11 +231,14 @@ class FluxResolverController(
         dnsQuery: ByteArray,
         primaryDns: String,
         secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
         domain: String
     ): ByteArray? {
-        DnsVpnService.log(LogType.WARNING, "FALLBACK", "Tier 3: Resolving '$domain' via Parallel Fast-UDP Anycast Racing...")
+        DnsVpnService.log(LogType.WARNING, "FALLBACK", "Tier 3: Resolving '$domain' via Dual-Stack Anycast UDP Racing...")
         try {
-            val response = raceUdpQueries(dnsQuery, primaryDns, secondaryDns)
+            val response = raceUdpQueries(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6)
             if (response != null && response.isNotEmpty()) {
                 DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 3 UDP Racing: Successfully resolved '$domain'")
                 return response
@@ -221,19 +250,28 @@ class FluxResolverController(
     }
 
     /**
-     * Anycast Parallel UDP Racing logic. Resolves the DNS query concurrently on multiple fallback servers
-     * to ensure the fastest successful response is accepted first.
+     * Anycast Parallel UDP Racing logic across dual-stack (IPv4/IPv6) endpoints.
      */
     private suspend fun raceUdpQueries(
         dnsQuery: ByteArray,
         primaryDns: String,
-        secondaryDns: String
+        secondaryDns: String,
+        enableIpv6: Boolean = false,
+        primaryIpv6: String = "",
+        secondaryIpv6: String = ""
     ): ByteArray? = coroutineScope {
-        val ips = mutableSetOf("8.8.8.8", "1.1.1.1", "9.9.9.9")
+        val ips = mutableSetOf<String>()
+        if (enableIpv6) {
+            if (primaryIpv6.isNotEmpty()) ips.add(primaryIpv6)
+            if (secondaryIpv6.isNotEmpty()) ips.add(secondaryIpv6)
+            ips.add("2001:4860:4860::8888")
+        }
         if (primaryDns.isNotEmpty()) ips.add(primaryDns)
         if (secondaryDns.isNotEmpty()) ips.add(secondaryDns)
+        ips.add("8.8.8.8")
+        ips.add("1.1.1.1")
 
-        val targetIps = ips.take(3).toList()
+        val targetIps = ips.take(4).toList()
         val channel = kotlinx.coroutines.channels.Channel<ByteArray>(1)
         val jobs = targetIps.map { ip ->
             launch(Dispatchers.IO) {

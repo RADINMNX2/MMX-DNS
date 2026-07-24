@@ -71,19 +71,35 @@ object DnsCacheFlusher {
     }
 
     private fun triggerNetworkDescriptorReset(context: Context) {
-        Log.i(TAG, "Toggling routing network interface states to invalidate global webview/system caches...")
+        Log.i(TAG, "Toggling and unbinding routing network interfaces inside the VPN scope to revert global routing...")
         try {
             val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             if (connectivityManager != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    // Unbind process from the current VPN network interface, if any
+                    try {
+                        connectivityManager.bindProcessToNetwork(null)
+                        Log.d(TAG, "Unbound process network successfully.")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to clear process network binding: ${e.message}", e)
+                    }
+                    
                     val activeNetwork = connectivityManager.activeNetwork
                     if (activeNetwork != null) {
                         val prevBoundNetwork = connectivityManager.boundNetworkForProcess
-                        connectivityManager.bindProcessToNetwork(activeNetwork)
-                        // Restore previous binding to trigger invalidation of process network cache descriptors
-                        connectivityManager.bindProcessToNetwork(prevBoundNetwork)
-                        Log.d(TAG, "Dynamic network descriptor toggle successfully completed.")
+                        // Cycle binding to trigger invalidation of process network cache descriptors
+                        try {
+                            connectivityManager.bindProcessToNetwork(activeNetwork)
+                            connectivityManager.bindProcessToNetwork(prevBoundNetwork)
+                            Log.d(TAG, "Dynamic network descriptor cycle completed.")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to cycle network binding: ${e.message}")
+                        }
                     }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    @Suppress("DEPRECATION")
+                    ConnectivityManager.setProcessDefaultNetwork(null)
+                    Log.d(TAG, "Unbound process default network successfully on legacy device.")
                 }
             }
         } catch (e: Exception) {

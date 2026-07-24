@@ -85,6 +85,9 @@ class DnsVpnService : VpnService() {
 
         const val EXTRA_PRIMARY_DNS = "primary_dns"
         const val EXTRA_SECONDARY_DNS = "secondary_dns"
+        const val EXTRA_ENABLE_IPV6 = "enable_ipv6"
+        const val EXTRA_PRIMARY_IPV6 = "primary_ipv6"
+        const val EXTRA_SECONDARY_IPV6 = "secondary_ipv6"
         const val EXTRA_PROFILE_NAME = "profile_name"
         const val EXTRA_PROTOCOL = "protocol" // Values: "DoH", "DoT", "UDP"
 
@@ -99,6 +102,15 @@ class DnsVpnService : VpnService() {
 
         private val _activeSecondaryDns = MutableStateFlow("")
         val activeSecondaryDns: StateFlow<String> = _activeSecondaryDns.asStateFlow()
+
+        private val _activeEnableIpv6 = MutableStateFlow(false)
+        val activeEnableIpv6: StateFlow<Boolean> = _activeEnableIpv6.asStateFlow()
+
+        private val _activePrimaryIpv6 = MutableStateFlow("")
+        val activePrimaryIpv6: StateFlow<String> = _activePrimaryIpv6.asStateFlow()
+
+        private val _activeSecondaryIpv6 = MutableStateFlow("")
+        val activeSecondaryIpv6: StateFlow<String> = _activeSecondaryIpv6.asStateFlow()
 
         private val _totalQueriesResolved = MutableStateFlow(0)
         val totalQueriesResolved: StateFlow<Int> = _totalQueriesResolved.asStateFlow()
@@ -267,9 +279,12 @@ class DnsVpnService : VpnService() {
         } else if (action == ACTION_START) {
             val primary = intent.getStringExtra(EXTRA_PRIMARY_DNS) ?: "8.8.8.8"
             val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: "8.8.4.4"
+            val enableIpv6 = intent.getBooleanExtra(EXTRA_ENABLE_IPV6, false)
+            val primaryIpv6 = intent.getStringExtra(EXTRA_PRIMARY_IPV6) ?: ""
+            val secondaryIpv6 = intent.getStringExtra(EXTRA_SECONDARY_IPV6) ?: ""
             val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Custom"
             val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "UDP"
-            startVpn(primary, secondary, name, protocol)
+            startVpn(primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, name, protocol)
         }
         return START_STICKY
     }
@@ -282,7 +297,15 @@ class DnsVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun startVpn(primaryDns: String, secondaryDns: String, profileName: String, protocol: String) {
+    private fun startVpn(
+        primaryDns: String,
+        secondaryDns: String,
+        enableIpv6: Boolean = false,
+        primaryIpv6: String = "",
+        secondaryIpv6: String = "",
+        profileName: String = "Custom",
+        protocol: String = "UDP"
+    ) {
         if (isRunning) {
             stopVpn()
         }
@@ -291,6 +314,9 @@ class DnsVpnService : VpnService() {
         _activeProfileName.value = profileName
         _activePrimaryDns.value = primaryDns
         _activeSecondaryDns.value = secondaryDns
+        _activeEnableIpv6.value = enableIpv6
+        _activePrimaryIpv6.value = primaryIpv6
+        _activeSecondaryIpv6.value = secondaryIpv6
         _totalQueriesResolved.value = 0
 
         // Initialize and register MultiPath interface manager
@@ -299,8 +325,9 @@ class DnsVpnService : VpnService() {
         }
         FluxDnsEngine.setMultiPathManager(multiPathManager)
 
+        val ipv6LogStr = if (enableIpv6 && primaryIpv6.isNotEmpty()) ", IPv6: $primaryIpv6" else ""
         log(LogType.INFO, "ENGINE", "Initializing DNS Changer Engine...")
-        log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns)")
+        log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns$ipv6LogStr)")
         log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
 
         val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
@@ -329,6 +356,20 @@ class DnsVpnService : VpnService() {
                 builder.addDnsServer(primaryDns)
                 if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
                     builder.addDnsServer(secondaryDns)
+                }
+
+                if (enableIpv6) {
+                    try {
+                        builder.addAddress("fd00:1::2", 128)
+                        if (primaryIpv6.isNotEmpty()) {
+                            builder.addDnsServer(primaryIpv6)
+                        }
+                        if (secondaryIpv6.isNotEmpty() && secondaryIpv6 != primaryIpv6) {
+                            builder.addDnsServer(secondaryIpv6)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to add IPv6 interface address and DNS servers", e)
+                    }
                 }
 
                 // Split Tunneling Configuration
@@ -372,6 +413,12 @@ class DnsVpnService : VpnService() {
                     if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
                         builder.addRoute(secondaryDns, 32)
                     }
+                    if (enableIpv6 && primaryIpv6.isNotEmpty()) {
+                        builder.addRoute(primaryIpv6, 128)
+                        if (secondaryIpv6.isNotEmpty() && secondaryIpv6 != primaryIpv6) {
+                            builder.addRoute(secondaryIpv6, 128)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to add specific DNS routes, falling back to routing DNS subnet", e)
                     try {
@@ -401,7 +448,9 @@ class DnsVpnService : VpnService() {
 
                 if (FluxDnsEngine.isNativeAvailable) {
                     log(LogType.SUCCESS, "ENGINE", "Native JNI engine successfully bound to TUN interface.")
-                    val started = FluxDnsEngine.start(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                    val activePrimaryNative = if (enableIpv6 && primaryIpv6.isNotEmpty()) primaryIpv6 else primaryDns
+                    val activeSecondaryNative = if (enableIpv6 && secondaryIpv6.isNotEmpty()) secondaryIpv6 else secondaryDns
+                    val started = FluxDnsEngine.start(vpnInterfaceLocal, activePrimaryNative, activeSecondaryNative, protocol)
                     if (started) {
                         log(LogType.SUCCESS, "ENGINE", "ZIBE: Finalizing VPN handshake. Applying CPU affinity and thread priority optimizations...")
                         FluxDnsEngine.applyZibeOptimization()
@@ -422,11 +471,11 @@ class DnsVpnService : VpnService() {
                         }
                     } else {
                         log(LogType.ERROR, "ENGINE", "Failed to start native engine. Invoking JVM fallback...")
-                        runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                        runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, protocol)
                     }
                 } else {
                     log(LogType.INFO, "ENGINE", "Running standard JVM-based packet routing engine.")
-                    runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, protocol)
+                    runVpnTunnelLoop(vpnInterfaceLocal, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, protocol)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in VPN tunnel thread", e)
@@ -509,22 +558,35 @@ class DnsVpnService : VpnService() {
         FluxDnsEngine.setMultiPathManager(null)
         multiPathManager = null
 
-        try {
-            vpnInterface?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to close VPN interface", e)
+        // Explicitly close the active TUN interface descriptor
+        val pfd = vpnInterface
+        if (pfd != null) {
+            try {
+                pfd.close()
+                log(LogType.WARNING, "TUNNEL", "Explicitly closed active TUN interface file descriptor.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to close VPN interface", e)
+                log(LogType.ERROR, "TUNNEL", "Failed to close VPN interface file descriptor: ${e.message}")
+            }
+            vpnInterface = null
         }
-        vpnInterface = null
 
-        
-        
-
+        // Cancel all running Kotlin coroutines in the VPN scope
         try {
             serviceScope.cancel()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to cancel service scope", e)
         }
-        
+
+        // Shut down any active thread executor and reset socket connections
+        try {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+            log(LogType.WARNING, "SOCKET", "Shut down active HTTP client thread pool and evicted all cached sockets.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to clean up OkHttpClient", e)
+        }
+
         // Flush standard JVM, webview, and process network routing descriptor caches
         try {
             DnsCacheFlusher.flushAll(applicationContext)
@@ -552,7 +614,15 @@ class DnsVpnService : VpnService() {
         }
     }
 
-    private suspend fun runVpnTunnelLoop(vpnInterface: ParcelFileDescriptor, primaryDns: String, secondaryDns: String, protocol: String) {
+    private suspend fun runVpnTunnelLoop(
+        vpnInterface: ParcelFileDescriptor,
+        primaryDns: String,
+        secondaryDns: String,
+        enableIpv6: Boolean = false,
+        primaryIpv6: String = "",
+        secondaryIpv6: String = "",
+        protocol: String = "UDP"
+    ) {
         val fileDescriptor = vpnInterface.fileDescriptor
         val input = FileInputStream(fileDescriptor)
         val output = FileOutputStream(fileDescriptor)
@@ -620,6 +690,9 @@ class DnsVpnService : VpnService() {
                                         output,
                                         primaryDns,
                                         secondaryDns,
+                                        enableIpv6,
+                                        primaryIpv6,
+                                        secondaryIpv6,
                                         protocol,
                                         isIpv6 = false
                                     )
@@ -673,6 +746,9 @@ class DnsVpnService : VpnService() {
                                         output,
                                         primaryDns,
                                         secondaryDns,
+                                        enableIpv6,
+                                        primaryIpv6,
+                                        secondaryIpv6,
                                         protocol,
                                         isIpv6 = true
                                     )
@@ -722,6 +798,9 @@ class DnsVpnService : VpnService() {
         output: FileOutputStream,
         primaryDns: String,
         secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
         protocol: String,
         isIpv6: Boolean
     ) {
@@ -729,7 +808,7 @@ class DnsVpnService : VpnService() {
         val ipVer = if (isIpv6) "IPv6" else "IPv4"
         log(LogType.INFO, "QUERY", "Requested: $domain ($ipVer) via 3-Tier Controller")
 
-        val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, domain, protocol)
+        val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain, protocol)
 
         if (response != null) {
             try {

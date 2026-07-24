@@ -41,7 +41,7 @@ fun ProfileScreen(
     currentSelectedId: Int?,
     onSelectProfile: (DnsProfile) -> Unit,
     onDeleteProfile: (DnsProfile) -> Unit,
-    onSaveProfile: (id: Int, name: String, primary: String, secondary: String, isDefault: Boolean, isCustom: Boolean, onComplete: () -> Unit) -> Unit,
+    onSaveProfile: (id: Int, name: String, primary: String, secondary: String, enableIpv6: Boolean, primaryIpv6: String, secondaryIpv6: String, isDefault: Boolean, isCustom: Boolean, onComplete: () -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -63,17 +63,24 @@ fun ProfileScreen(
     var nameInput by remember { mutableStateOf("") }
     var primaryInput by remember { mutableStateOf("") }
     var secondaryInput by remember { mutableStateOf("") }
+    var enableIpv6Input by remember { mutableStateOf(false) }
+    var primaryIpv6Input by remember { mutableStateOf("") }
+    var secondaryIpv6Input by remember { mutableStateOf("") }
     var isDefaultInput by remember { mutableStateOf(false) }
 
     // Validation state
     var nameError by remember { mutableStateOf(false) }
     var primaryError by remember { mutableStateOf(false) }
     var secondaryError by remember { mutableStateOf(false) }
+    var primaryIpv6Error by remember { mutableStateOf(false) }
+    var secondaryIpv6Error by remember { mutableStateOf(false) }
 
     // Shake animation trigger counters
-    var primaryShakeTrigger by remember { mutableStateOf(0) }
     var nameShakeTrigger by remember { mutableStateOf(0) }
+    var primaryShakeTrigger by remember { mutableStateOf(0) }
     var secondaryShakeTrigger by remember { mutableStateOf(0) }
+    var primaryIpv6ShakeTrigger by remember { mutableStateOf(0) }
+    var secondaryIpv6ShakeTrigger by remember { mutableStateOf(0) }
 
     // Morphing button states
     // 0: Idle, 1: Loading (circular spinner), 2: Success Checkmark
@@ -83,33 +90,42 @@ fun ProfileScreen(
     var isFormExpanded by remember { mutableStateOf(false) }
 
     // Helper functions for IP validation
-    fun isValidIp(ip: String): Boolean {
+    fun isValidIpv4(ip: String): Boolean {
         if (ip.trim().isEmpty()) return false
         val ipv4Regex = """^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$""".toRegex()
+        return ipv4Regex.matches(ip.trim())
+    }
+
+    fun isValidIpv6(ip: String): Boolean {
+        if (ip.trim().isEmpty()) return false
         val ipv6Regex = """^(?:[0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,7}:$|^::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$""".toRegex()
-        return ipv4Regex.matches(ip.trim()) || ipv6Regex.matches(ip.trim())
+        return ipv6Regex.matches(ip.trim())
     }
 
     fun handleSave() {
         // Reset errors
         nameError = nameInput.trim().isEmpty()
-        primaryError = !isValidIp(primaryInput)
-        secondaryError = secondaryInput.trim().isNotEmpty() && !isValidIp(secondaryInput)
+        primaryError = !isValidIpv4(primaryInput)
+        secondaryError = secondaryInput.trim().isNotEmpty() && !isValidIpv4(secondaryInput)
+        primaryIpv6Error = enableIpv6Input && !isValidIpv6(primaryIpv6Input)
+        secondaryIpv6Error = enableIpv6Input && secondaryIpv6Input.trim().isNotEmpty() && !isValidIpv6(secondaryIpv6Input)
 
         if (nameError) nameShakeTrigger++
         if (primaryError) primaryShakeTrigger++
         if (secondaryError) secondaryShakeTrigger++
+        if (primaryIpv6Error) primaryIpv6ShakeTrigger++
+        if (secondaryIpv6Error) secondaryIpv6ShakeTrigger++
 
-        if (nameError || primaryError || secondaryError) {
+        if (nameError || primaryError || secondaryError || primaryIpv6Error || secondaryIpv6Error) {
             return
         }
 
         // Start Morphing Animation
         coroutineScope.launch {
             buttonMorphState = 1 // Shrink and spin
-            delay(1200) // Simulate database persistence delay
+            delay(1000) // Simulate database persistence delay
             buttonMorphState = 2 // Transition to Green Success Checkmark
-            delay(1000)
+            delay(800)
 
             // Save actual data to DB
             onSaveProfile(
@@ -117,6 +133,9 @@ fun ProfileScreen(
                 nameInput.trim(),
                 primaryInput.trim(),
                 secondaryInput.trim(),
+                enableIpv6Input,
+                if (enableIpv6Input) primaryIpv6Input.trim() else "",
+                if (enableIpv6Input) secondaryIpv6Input.trim() else "",
                 isDefaultInput,
                 true // isCustom
             ) {
@@ -126,6 +145,9 @@ fun ProfileScreen(
                     nameInput = ""
                     primaryInput = ""
                     secondaryInput = ""
+                    enableIpv6Input = false
+                    primaryIpv6Input = ""
+                    secondaryIpv6Input = ""
                     isDefaultInput = false
                     buttonMorphState = 0
                     isFormExpanded = false
@@ -178,96 +200,125 @@ fun ProfileScreen(
     ) {
         // Render background particles
         com.example.ui.components.ParticlesBg(isActive = true)
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp)
         ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "PROFILES",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF00F0FF).copy(alpha = 0.8f),
-                        letterSpacing = 4.sp
-                    )
-                    Text(
-                        text = "DNS SERVERS",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-
-                // Add Profile FAB-like button
-                IconButton(
-                    onClick = {
-                        // Toggle form expansion
-                        if (isFormExpanded && editId != 0) {
-                            // If editing, reset to create mode instead of collapsing
-                            editId = 0
-                            nameInput = ""
-                            primaryInput = ""
-                            secondaryInput = ""
-                            isDefaultInput = false
-                        } else {
-                            isFormExpanded = !isFormExpanded
-                        }
-                    },
+            // Header Item
+            item(key = "header_item") {
+                Row(
                     modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color(0xFF161B29))
-                        .testTag("add_profile_fab")
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (isFormExpanded && editId == 0) Icons.Default.Close else Icons.Default.Add,
-                        contentDescription = "Add New Profile",
-                        tint = Color(0xFF00F0FF)
-                    )
+                    Column {
+                        Text(
+                            text = "PROFILES",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00F0FF).copy(alpha = 0.8f),
+                            letterSpacing = 4.sp
+                        )
+                        Text(
+                            text = "DNS SERVERS",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
+
+                    // Add Profile FAB-like button
+                    IconButton(
+                        onClick = {
+                            if (isFormExpanded && editId != 0) {
+                                editId = 0
+                                nameInput = ""
+                                primaryInput = ""
+                                secondaryInput = ""
+                                enableIpv6Input = false
+                                primaryIpv6Input = ""
+                                secondaryIpv6Input = ""
+                                isDefaultInput = false
+                            } else {
+                                isFormExpanded = !isFormExpanded
+                            }
+                        },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFF161B29))
+                            .testTag("add_profile_fab")
+                    ) {
+                        Icon(
+                            imageVector = if (isFormExpanded && editId == 0) Icons.Default.Close else Icons.Default.Add,
+                            contentDescription = "Add New Profile",
+                            tint = Color(0xFF00F0FF)
+                        )
+                    }
                 }
             }
 
-            // Expanded Form Area
-            AnimatedVisibility(
-                visible = isFormExpanded,
-                enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
-                exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
-            ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF131825)),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color(0xFF202A3F), Color(0x22101524))
-                        )
-                    )
+            // Expanded Form Area Item
+            item(key = "form_item") {
+                AnimatedVisibility(
+                    visible = isFormExpanded,
+                    enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                    exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                 ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF111625)),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0xFF00F0FF).copy(alpha = 0.3f), Color(0x22101524))
+                            )
+                        )
+                    ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Text(
-                            text = if (editId == 0) "CREATE NEW PROFILE" else "EDIT DNS PROFILE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF00F0FF).copy(alpha = 0.8f),
-                            letterSpacing = 2.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (editId == 0) "CREATE NEW PROFILE" else "EDIT DNS PROFILE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00F0FF).copy(alpha = 0.9f),
+                                letterSpacing = 2.sp
+                            )
+
+                            if (enableIpv6Input) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color(0x2200FF88), RoundedCornerShape(8.dp))
+                                        .border(1.dp, Color(0xFF00FF88).copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "DUAL-STACK ACTIVE",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color(0xFF00FF88),
+                                        letterSpacing = 1.sp
+                                    )
+                                }
+                            }
+                        }
 
                         // Character typing visualization on header name
                         if (nameInput.isNotEmpty()) {
@@ -295,7 +346,7 @@ fun ProfileScreen(
                                 nameError = false
                             },
                             label = { Text("Profile Name") },
-                            placeholder = { Text("e.g. My Private DNS") },
+                            placeholder = { Text("e.g. Cyber Shield DNS") },
                             isError = nameError,
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
@@ -316,75 +367,291 @@ fun ProfileScreen(
                                 .testTag("input_profile_name")
                         )
 
-                        // Primary DNS input
-                        OutlinedTextField(
-                            value = primaryInput,
-                            onValueChange = {
-                                primaryInput = it
-                                primaryError = false
-                            },
-                            label = { Text("Primary DNS (IPv4/IPv6)") },
-                            placeholder = { Text("e.g. 1.1.1.1") },
-                            isError = primaryError,
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            supportingText = {
-                                if (primaryError) {
-                                    Text("Invalid IPv4 or IPv6 Address format", color = Color(0xFFFF3355))
+                        // --- IPv4 SECTION CARD ---
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0x660B0F1A)),
+                            border = BorderStroke(1.dp, Color(0x1A00F0FF))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .background(Color(0x2200F0FF), CircleShape)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Dns,
+                                            contentDescription = "IPv4 Icon",
+                                            tint = Color(0xFF00F0FF),
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "IPv4 ENDPOINTS",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF00F0FF),
+                                        letterSpacing = 1.sp
+                                    )
                                 }
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF00F0FF),
-                                unfocusedBorderColor = Color(0x33FFFFFF),
-                                errorBorderColor = Color(0xFFFF3355),
-                                focusedLabelColor = Color(0xFF00F0FF),
-                                unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
-                                errorLabelColor = Color(0xFFFF3355),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                cursorColor = Color(0xFF00F0FF)
-                            ),
+
+                                // Primary IPv4
+                                OutlinedTextField(
+                                    value = primaryInput,
+                                    onValueChange = {
+                                        primaryInput = it
+                                        primaryError = false
+                                    },
+                                    label = { Text("Primary IPv4 Address") },
+                                    placeholder = { Text("e.g. 1.1.1.1") },
+                                    isError = primaryError,
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    supportingText = {
+                                        if (primaryError) {
+                                            Text("Valid IPv4 required (e.g. 1.1.1.1)", color = Color(0xFFFF3355))
+                                        }
+                                    },
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFF00F0FF),
+                                        unfocusedBorderColor = Color(0x33FFFFFF),
+                                        errorBorderColor = Color(0xFFFF3355),
+                                        focusedLabelColor = Color(0xFF00F0FF),
+                                        unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        cursorColor = Color(0xFF00F0FF)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .shake(primaryShakeTrigger)
+                                        .testTag("input_primary_dns")
+                                )
+
+                                // Secondary IPv4
+                                OutlinedTextField(
+                                    value = secondaryInput,
+                                    onValueChange = {
+                                        secondaryInput = it
+                                        secondaryError = false
+                                    },
+                                    label = { Text("Secondary IPv4 Address (Optional)") },
+                                    placeholder = { Text("e.g. 1.0.0.1") },
+                                    isError = secondaryError,
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    supportingText = {
+                                        if (secondaryError) {
+                                            Text("Invalid IPv4 address format", color = Color(0xFFFF3355))
+                                        }
+                                    },
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFF00F0FF),
+                                        unfocusedBorderColor = Color(0x33FFFFFF),
+                                        errorBorderColor = Color(0xFFFF3355),
+                                        focusedLabelColor = Color(0xFF00F0FF),
+                                        unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        cursorColor = Color(0xFF00F0FF)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .shake(secondaryShakeTrigger)
+                                        .testTag("input_secondary_dns")
+                                )
+                            }
+                        }
+
+                        // --- ENABLE IPV6 TOGGLE SWITCH CARD ---
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .shake(primaryShakeTrigger)
-                                .testTag("input_primary_dns")
-                        )
-
-                        // Secondary DNS input
-                        OutlinedTextField(
-                            value = secondaryInput,
-                            onValueChange = {
-                                secondaryInput = it
-                                secondaryError = false
-                            },
-                            label = { Text("Secondary DNS (Optional)") },
-                            placeholder = { Text("e.g. 1.0.0.1") },
-                            isError = secondaryError,
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            supportingText = {
-                                if (secondaryError) {
-                                    Text("Invalid IPv4 or IPv6 Address format", color = Color(0xFFFF3355))
-                                }
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF00F0FF),
-                                unfocusedBorderColor = Color(0x33FFFFFF),
-                                errorBorderColor = Color(0xFFFF3355),
-                                focusedLabelColor = Color(0xFF00F0FF),
-                                unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
-                                errorLabelColor = Color(0xFFFF3355),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                cursorColor = Color(0xFF00F0FF)
+                                .clickable { enableIpv6Input = !enableIpv6Input },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (enableIpv6Input) Color(0x2200FF88) else Color(0x440B0F1A)
                             ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .shake(secondaryShakeTrigger)
-                                .testTag("input_secondary_dns")
-                        )
+                            border = BorderStroke(
+                                1.dp,
+                                if (enableIpv6Input) Color(0xFF00FF88).copy(alpha = 0.6f) else Color(0x1EFFFFFF)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(
+                                                if (enableIpv6Input) Color(0x3300FF88) else Color(0x11FFFFFF),
+                                                CircleShape
+                                            )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Router,
+                                            contentDescription = "IPv6 Router",
+                                            tint = if (enableIpv6Input) Color(0xFF00FF88) else Color.White.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = "ENABLE IPV6 DUAL-STACK",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (enableIpv6Input) Color(0xFF00FF88) else Color.White,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                        Text(
+                                            text = "Activates IPv6 primary and secondary routes",
+                                            fontSize = 10.sp,
+                                            color = Color.White.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
 
-                        // Morphing "Save" Button
+                                Switch(
+                                    checked = enableIpv6Input,
+                                    onCheckedChange = { enableIpv6Input = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF04060A),
+                                        checkedTrackColor = Color(0xFF00FF88),
+                                        uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                        uncheckedTrackColor = Color(0x33FFFFFF)
+                                    ),
+                                    modifier = Modifier.testTag("ipv6_toggle_switch")
+                                )
+                            }
+                        }
+
+                        // --- IPv6 DYNAMIC EXPANDABLE CARDS ---
+                        AnimatedVisibility(
+                            visible = enableIpv6Input,
+                            enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                            exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
+                        ) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0x880E1322)),
+                                border = BorderStroke(1.dp, Color(0xFF00FF88).copy(alpha = 0.4f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .size(22.dp)
+                                                .background(Color(0x3300FF88), CircleShape)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Lan,
+                                                contentDescription = "IPv6 Icon",
+                                                tint = Color(0xFF00FF88),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "IPv6 ENDPOINTS",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF00FF88),
+                                            letterSpacing = 1.sp
+                                        )
+                                    }
+
+                                    // Primary IPv6
+                                    OutlinedTextField(
+                                        value = primaryIpv6Input,
+                                        onValueChange = {
+                                            primaryIpv6Input = it
+                                            primaryIpv6Error = false
+                                        },
+                                        label = { Text("Primary IPv6 Address") },
+                                        placeholder = { Text("e.g. 2001:4860:4860::8888") },
+                                        isError = primaryIpv6Error,
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp),
+                                        supportingText = {
+                                            if (primaryIpv6Error) {
+                                                Text("Valid IPv6 required (e.g. 2606:4700:4700::1111)", color = Color(0xFFFF3355))
+                                            }
+                                        },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = Color(0xFF00FF88),
+                                            unfocusedBorderColor = Color(0x33FFFFFF),
+                                            errorBorderColor = Color(0xFFFF3355),
+                                            focusedLabelColor = Color(0xFF00FF88),
+                                            unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            cursorColor = Color(0xFF00FF88)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .shake(primaryIpv6ShakeTrigger)
+                                            .testTag("input_primary_ipv6")
+                                    )
+
+                                    // Secondary IPv6
+                                    OutlinedTextField(
+                                        value = secondaryIpv6Input,
+                                        onValueChange = {
+                                            secondaryIpv6Input = it
+                                            secondaryIpv6Error = false
+                                        },
+                                        label = { Text("Secondary IPv6 Address (Optional)") },
+                                        placeholder = { Text("e.g. 2001:4860:4860::8884") },
+                                        isError = secondaryIpv6Error,
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp),
+                                        supportingText = {
+                                            if (secondaryIpv6Error) {
+                                                Text("Invalid IPv6 address format", color = Color(0xFFFF3355))
+                                            }
+                                        },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = Color(0xFF00FF88),
+                                            unfocusedBorderColor = Color(0x33FFFFFF),
+                                            errorBorderColor = Color(0xFFFF3355),
+                                            focusedLabelColor = Color(0xFF00FF88),
+                                            unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            cursorColor = Color(0xFF00FF88)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .shake(secondaryIpv6ShakeTrigger)
+                                            .testTag("input_secondary_ipv6")
+                                    )
+                                }
+                            }
+                        }
+
+                        // Morphing "Save Profile" Button
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.fillMaxWidth()
@@ -451,19 +718,24 @@ fun ProfileScreen(
                     }
                 }
             }
+        }
 
-            // Profiles list
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 8.dp)
-            ) {
-                items(
-                    items = profiles,
-                    key = { it.id }
-                ) { profile ->
+        // Section Header Item
+            item(key = "section_title_item") {
+                Text(
+                    text = "AVAILABLE DNS PROFILES (${profiles.size})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.6f),
+                    letterSpacing = 2.sp,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                )
+            }
+
+            items(
+                items = profiles,
+                key = { it.id }
+            ) { profile ->
                     val isSelected = currentSelectedId == profile.id
 
                     val activeGlowBorder by animateColorAsState(
@@ -521,8 +793,37 @@ fun ProfileScreen(
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White
                                         )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        if (profile.enableIpv6) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0x2200FF88), RoundedCornerShape(4.dp))
+                                                    .border(0.5.dp, Color(0xFF00FF88).copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "IPv4/IPv6",
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF00FF88)
+                                                )
+                                            }
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0x2200F0FF), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "IPv4 ONLY",
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF00F0FF)
+                                                )
+                                            }
+                                        }
                                         if (!profile.isCustom) {
-                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
                                             Box(
                                                 modifier = Modifier
                                                     .background(Color(0xFF222F3E), RoundedCornerShape(4.dp))
@@ -532,18 +833,26 @@ fun ProfileScreen(
                                                     text = "SYSTEM",
                                                     fontSize = 8.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = Color(0xFF00F0FF)
+                                                    color = Color.White.copy(alpha = 0.7f)
                                                 )
                                             }
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "${profile.primaryDns}  |  ${profile.secondaryDns.ifEmpty { "None" }}",
-                                        fontSize = 12.sp,
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        text = "IPv4: ${profile.primaryDns}  |  ${profile.secondaryDns.ifEmpty { "None" }}",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.7f),
                                         fontFamily = FontFamily.Monospace
                                     )
+                                    if (profile.enableIpv6 && profile.primaryIpv6.isNotEmpty()) {
+                                        Text(
+                                            text = "IPv6: ${profile.primaryIpv6}  |  ${profile.secondaryIpv6.ifEmpty { "None" }}",
+                                            fontSize = 10.sp,
+                                            color = Color(0xFF00FF88).copy(alpha = 0.8f),
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
                                 }
                             }
 
@@ -559,6 +868,9 @@ fun ProfileScreen(
                                         nameInput = profile.name
                                         primaryInput = profile.primaryDns
                                         secondaryInput = profile.secondaryDns
+                                        enableIpv6Input = profile.enableIpv6
+                                        primaryIpv6Input = profile.primaryIpv6
+                                        secondaryIpv6Input = profile.secondaryIpv6
                                         isDefaultInput = profile.isDefault
                                         isFormExpanded = true
                                     },
@@ -593,4 +905,3 @@ fun ProfileScreen(
             }
         }
     }
-}

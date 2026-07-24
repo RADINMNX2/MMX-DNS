@@ -78,11 +78,11 @@ class DnsViewModel(
     private val _selectedProfile = MutableStateFlow<DnsProfile?>(null)
     val selectedProfile: StateFlow<DnsProfile?> = _selectedProfile.asStateFlow()
 
-    private val _isTurboEnabled = MutableStateFlow(true)
-    val isTurboEnabled: StateFlow<Boolean> = _isTurboEnabled.asStateFlow()
-
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
+
+    private val _isGamingShieldEnabled = MutableStateFlow(true)
+    val isGamingShieldEnabled: StateFlow<Boolean> = _isGamingShieldEnabled.asStateFlow()
 
     fun setAppInForeground(foreground: Boolean) {
         _isAppInForeground.value = foreground
@@ -94,29 +94,6 @@ class DnsViewModel(
             Log.d("DnsViewModel", "ZIBE: ON_START caught. Resuming all UI flows and active monitoring.")
         }
     }
-
-    fun setTurboEnabled(enabled: Boolean) {
-        _isTurboEnabled.value = enabled
-        // If VPN is connected, dynamically switch to the new protocol instantly!
-        if (vpnState.value == VpnState.CONNECTED) {
-            val currentSelected = _selectedProfile.value ?: return
-            val intent = Intent(context, DnsVpnService::class.java).apply {
-                action = DnsVpnService.ACTION_START
-                putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
-                putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
-                putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (enabled) "DoQ" else "UDP")
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }
-    }
-
-    private val _isGamingShieldEnabled = MutableStateFlow(true)
-    val isGamingShieldEnabled: StateFlow<Boolean> = _isGamingShieldEnabled.asStateFlow()
 
     fun setGamingShieldEnabled(enabled: Boolean) {
         _isGamingShieldEnabled.value = enabled
@@ -133,7 +110,7 @@ class DnsViewModel(
                 putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -144,6 +121,11 @@ class DnsViewModel(
     }
 
     init {
+        // Ensure default profiles (Google, Cloudflare, Radar Game, Shecan, Electro, etc.) exist in the database
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.ensureDefaultProfilesExist()
+        }
+
         // Check for saved crash logs from previous sessions
         val savedCrash = com.example.util.CrashHandler.getSavedCrashLog(context)
         if (savedCrash != null) {
@@ -208,8 +190,11 @@ class DnsViewModel(
                     action = DnsVpnService.ACTION_START
                     putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, profile.primaryDns)
                     putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, profile.secondaryDns)
+                    putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, profile.enableIpv6)
+                    putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, profile.primaryIpv6)
+                    putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, profile.secondaryIpv6)
                     putExtra(DnsVpnService.EXTRA_PROFILE_NAME, profile.name)
-                    putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+                    putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -227,8 +212,11 @@ class DnsViewModel(
                 action = DnsVpnService.ACTION_START
                 putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
                 putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
+                putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, currentSelected.enableIpv6)
+                putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, currentSelected.primaryIpv6)
+                putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, currentSelected.secondaryIpv6)
                 putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+                putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -266,8 +254,11 @@ class DnsViewModel(
                             action = DnsVpnService.ACTION_START
                             putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, nextProfile.primaryDns)
                             putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, nextProfile.secondaryDns)
+                            putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, nextProfile.enableIpv6)
+                            putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, nextProfile.primaryIpv6)
+                            putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, nextProfile.secondaryIpv6)
                             putExtra(DnsVpnService.EXTRA_PROFILE_NAME, nextProfile.name)
-                            putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+                            putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
                         }
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             context.startForegroundService(intent)
@@ -282,13 +273,27 @@ class DnsViewModel(
         }
     }
 
-    fun saveProfile(id: Int, name: String, primary: String, secondary: String, isDefault: Boolean, isCustom: Boolean, onComplete: () -> Unit) {
+    fun saveProfile(
+        id: Int,
+        name: String,
+        primary: String,
+        secondary: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
+        isDefault: Boolean,
+        isCustom: Boolean,
+        onComplete: () -> Unit
+    ) {
         viewModelScope.launch {
             val profile = DnsProfile(
                 id = id,
                 name = name,
                 primaryDns = primary,
                 secondaryDns = secondary,
+                enableIpv6 = enableIpv6,
+                primaryIpv6 = primaryIpv6,
+                secondaryIpv6 = secondaryIpv6,
                 isDefault = isDefault,
                 isCustom = isCustom
             )
@@ -314,8 +319,11 @@ class DnsViewModel(
                         action = DnsVpnService.ACTION_START
                         putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, primary)
                         putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, secondary)
+                        putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, enableIpv6)
+                        putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, primaryIpv6)
+                        putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, secondaryIpv6)
                         putExtra(DnsVpnService.EXTRA_PROFILE_NAME, name)
-                        putExtra(DnsVpnService.EXTRA_PROTOCOL, if (isTurboEnabled.value) "DoQ" else "UDP")
+                        putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
                     }
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         context.startForegroundService(intent)
