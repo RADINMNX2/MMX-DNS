@@ -43,6 +43,44 @@ class FluxResolverController(
      * Executes the sequential 3-tier cascade resolution pipeline for an incoming DNS query packet.
      * Guaranteed to operate on a background dispatcher (Dispatchers.IO) to prevent blocking.
      */
+    private val inMemoryCache = java.util.concurrent.ConcurrentHashMap<String, CachedDnsResponse>()
+
+    data class CachedDnsResponse(
+        val response: ByteArray,
+        val timestamp: Long = System.currentTimeMillis(),
+        val ttlMs: Long = 300_000L // 5 min TTL
+    ) {
+        fun isExpired(): Boolean = System.currentTimeMillis() - timestamp > ttlMs
+        fun needsPrefetch(): Boolean = System.currentTimeMillis() - timestamp > (ttlMs * 0.8)
+    }
+
+    fun clearCache() {
+        inMemoryCache.clear()
+        Log.i(TAG, "FluxResolverController L2 In-Memory Cache purged successfully.")
+    }
+
+    private fun extractDomainKey(dnsQuery: ByteArray, domainName: String): String {
+        if (domainName.isNotEmpty() && domainName != "unknown") return domainName
+        if (dnsQuery.size < 12) return "raw_${dnsQuery.contentHashCode()}"
+        try {
+            var pos = 12
+            val sb = StringBuilder()
+            while (pos < dnsQuery.size) {
+                val len = dnsQuery[pos].toInt() and 0xFF
+                if (len == 0) break
+                if ((len and 0xC0) == 0xC0) break
+                if (pos + 1 + len > dnsQuery.size) break
+                if (sb.isNotEmpty()) sb.append(".")
+                sb.append(String(dnsQuery, pos + 1, len, Charsets.US_ASCII))
+                pos += 1 + len
+            }
+            val parsed = sb.toString()
+            return if (parsed.isNotBlank()) parsed else "hash_${dnsQuery.contentHashCode()}"
+        } catch (_: Exception) {
+            return "hash_${dnsQuery.contentHashCode()}"
+        }
+    }
+
     suspend fun resolve(
         dnsQuery: ByteArray,
         primaryDns: String,
@@ -53,6 +91,51 @@ class FluxResolverController(
         domain: String = "unknown",
         protocol: String = "UDP"
     ): ByteArray? = withContext(Dispatchers.IO) {
+        val domainKey = extractDomainKey(dnsQuery, domain)
+
+        // Tier 0: Zero-Copy L2 In-Memory Cache Lookup (0ms latency hit)
+        val cached = inMemoryCache[domainKey]
+        if (cached != null && !cached.isExpired()) {
+            DnsVpnService.log(LogType.SUCCESS, "CACHE_HIT", "Tier 0 (0ms): Instant L2 cache hit for '$domainKey'")
+            
+            // Clone response bytes and copy current query's Transaction ID into response header
+            val matchedResponse = cached.response.copyOf()
+            if (dnsQuery.size >= 2 && matchedResponse.size >= 2) {
+                matchedResponse[0] = dnsQuery[0]
+                matchedResponse[1] = dnsQuery[1]
+            }
+
+            // Background pre-fetching if TTL is nearing expiration (> 80% elapsed)
+            if (cached.needsPrefetch()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val fresh = executeResolutionPipeline(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domainKey, protocol)
+                        if (fresh != null) {
+                            inMemoryCache[domainKey] = CachedDnsResponse(fresh)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+            return@withContext matchedResponse
+        }
+
+        val resolvedResponse = executeResolutionPipeline(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domainKey, protocol)
+        if (resolvedResponse != null && resolvedResponse.isNotEmpty()) {
+            inMemoryCache[domainKey] = CachedDnsResponse(resolvedResponse)
+        }
+        return@withContext resolvedResponse
+    }
+
+    private suspend fun executeResolutionPipeline(
+        dnsQuery: ByteArray,
+        primaryDns: String,
+        secondaryDns: String,
+        enableIpv6: Boolean,
+        primaryIpv6: String,
+        secondaryIpv6: String,
+        domain: String,
+        protocol: String
+    ): ByteArray? {
         var response: ByteArray? = null
 
         // =====================================================================
@@ -69,7 +152,7 @@ class FluxResolverController(
                 }
                 if (response != null && response.isNotEmpty()) {
                     DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved '$domain' via Native JNI.")
-                    return@withContext response
+                    return response
                 } else if (enableIpv6 && activePrimary != primaryDns) {
                     // Fallback Native query on IPv4
                     response = withTimeoutOrNull(TIER1_TIMEOUT_MS) {
@@ -77,7 +160,7 @@ class FluxResolverController(
                     }
                     if (response != null && response.isNotEmpty()) {
                         DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Tier 1: Resolved '$domain' via Native JNI (IPv4 Fallback).")
-                        return@withContext response
+                        return response
                     }
                 }
             } catch (e: TimeoutCancellationException) {
@@ -94,47 +177,47 @@ class FluxResolverController(
         when (protocol) {
             "DoQ" -> {
                 response = tryResolveDoQ(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
             }
             "DoH" -> {
                 response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
             }
             "DoT" -> {
                 response = tryResolveDoT(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
             }
             else -> {
                 response = tryResolveUdpRacing(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
 
                 response = tryResolveDoH(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain)
-                if (response != null) return@withContext response
+                if (response != null) return response
             }
         }
 
-        return@withContext null
+        return null
     }
 
     private suspend fun tryResolveDoQ(
@@ -250,7 +333,7 @@ class FluxResolverController(
     }
 
     /**
-     * Anycast Parallel UDP Racing logic across dual-stack (IPv4/IPv6) endpoints.
+     * Anycast Parallel UDP Racing logic across dual-stack (IPv4/IPv6) endpoints with MultiPath support.
      */
     private suspend fun raceUdpQueries(
         dnsQuery: ByteArray,
@@ -272,11 +355,18 @@ class FluxResolverController(
         ips.add("1.1.1.1")
 
         val targetIps = ips.take(4).toList()
+        val multiPath = MultiPathManager.getInstance(context)
         val channel = kotlinx.coroutines.channels.Channel<ByteArray>(1)
-        val jobs = targetIps.map { ip ->
+
+        val jobs = targetIps.mapIndexed { index, ip ->
             launch(Dispatchers.IO) {
                 try {
-                    val res = resolveViaUdp(dnsQuery, ip)
+                    // Dual-Path Racing: alternate queries over Wi-Fi and Cellular physical chips
+                    val targetNetwork = if (multiPath.isMultiPathAvailable()) {
+                        if (index % 2 == 0) multiPath.getWifiNetwork() else multiPath.getCellularNetwork()
+                    } else null
+                    
+                    val res = resolveViaUdp(dnsQuery, ip, targetNetwork)
                     if (res != null) {
                         channel.trySend(res)
                     }
@@ -286,7 +376,7 @@ class FluxResolverController(
             }
         }
 
-        val result = withTimeoutOrNull(1200L) {
+        val result = withTimeoutOrNull(1000L) {
             channel.receive()
         }
         jobs.forEach { it.cancel() }
@@ -296,16 +386,35 @@ class FluxResolverController(
     /**
      * Executes a single UDP DNS packet request and awaits response with a tight timeout constraint.
      */
-    private suspend fun resolveViaUdp(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
+    private suspend fun resolveViaUdp(
+        dnsQuery: ByteArray, 
+        dnsIp: String,
+        targetNetwork: android.net.Network? = null
+    ): ByteArray? = withContext(Dispatchers.IO) {
         var socket: DatagramSocket? = null
         try {
             socket = DatagramSocket()
-            protectSocket(socket) // Ensure socket bypasses the Android VPN interface to prevent circular loops
-            socket.soTimeout = 1000 // Strict 1-second socket timeout for quick fallback
             
-            // Explicitly tuned buffers to handle heavy loads under congestion
-            socket.sendBufferSize = 65536
-            socket.receiveBufferSize = 65536
+            if (targetNetwork != null) {
+                try {
+                    targetNetwork.bindSocket(socket)
+                } catch (e: Exception) {
+                    protectSocket(socket)
+                }
+            } else {
+                protectSocket(socket) // Ensure socket bypasses the Android VPN interface to prevent circular loops
+            }
+
+            socket.soTimeout = 800 // Strict 800ms socket timeout for ultra-fast racing
+            socket.sendBufferSize = 131072 // 128KB buffer expansion for burst handling
+            socket.receiveBufferSize = 131072
+
+            try {
+                // DSCP Expedited Forwarding (0x28) for high priority gaming traffic
+                socket.trafficClass = 0x28
+            } catch (e: Exception) {
+                try { socket.trafficClass = 0x10 } catch (_: Exception) {}
+            }
 
             val address = InetAddress.getByName(dnsIp)
             val forwardPacket = DatagramPacket(dnsQuery, dnsQuery.size, address, 53)

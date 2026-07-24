@@ -187,6 +187,9 @@ fun GamingShieldScreen(
     onAddCustomApp: (name: String, packageName: String) -> Unit,
     onAddMultipleApps: (apps: List<GamingApp>) -> Unit = {},
     onDeleteGamingApp: (packageName: String) -> Unit = {},
+    pingMs: Int? = null,
+    jitterMs: Int = 0,
+    packetLossPercent: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     var showAppsPickerModal by remember { mutableStateOf(false) }
@@ -414,25 +417,49 @@ fun GamingShieldScreen(
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(Color(0xFF070A12))
                                     .border(0.5.dp, Color(0x1AFFFFFF), RoundedCornerShape(14.dp))
-                                    .padding(vertical = 10.dp, horizontal = 12.dp),
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceAround
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("ROUTE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
+                                    Text("PING", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
                                     Spacer(modifier = Modifier.height(2.dp))
-                                    Text("Direct Split", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00FF88))
+                                    Text(
+                                        text = if (pingMs == null) "--" else "$pingMs ms",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (pingMs != null && pingMs < 80) Color(0xFF00FF88) else Color(0xFF00F0FF),
+                                        fontFamily = FontFamily.Monospace
+                                    )
                                 }
                                 Box(modifier = Modifier.width(1.dp).height(24.dp).background(Color(0x1AFFFFFF)))
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("LATENCY", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
+                                    Text("JITTER", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
                                     Spacer(modifier = Modifier.height(2.dp))
-                                    Text("Ultra-Low", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00F0FF))
+                                    Text(
+                                        text = "$jitterMs ms",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (jitterMs < 5) Color(0xFF00FF88) else Color(0xFFFFB703),
+                                        fontFamily = FontFamily.Monospace
+                                    )
                                 }
                                 Box(modifier = Modifier.width(1.dp).height(24.dp).background(Color(0x1AFFFFFF)))
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("QOS / DSCP", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
+                                    Text("LOSS", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
                                     Spacer(modifier = Modifier.height(2.dp))
-                                    Text("Active", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFB703))
+                                    Text(
+                                        text = "${String.format("%.1f", packetLossPercent)}%",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (packetLossPercent < 0.1f) Color(0xFF00FF88) else Color(0xFFFF5252),
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                Box(modifier = Modifier.width(1.dp).height(24.dp).background(Color(0x1AFFFFFF)))
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("QOS / DSCP", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text("0x28 (EF)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA862FF))
                                 }
                             }
 

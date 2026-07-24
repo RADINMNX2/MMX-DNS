@@ -14,7 +14,8 @@ class DnsOverQuicClient(
         private const val TAG = "DnsOverQuicClient"
         private const val DEFAULT_DOQ_PORT = 784 // RFC 9250 standard DoQ port
         private const val BACKUP_DOQ_PORT = 853  // Alternative DoQ/DoT port
-        private const val TIMEOUT_MS = 1500
+        private const val HTTP3_DOQ_PORT = 443   // Standard HTTPS/DoH3 port
+        private const val TIMEOUT_MS = 1200
     }
 
     /**
@@ -23,18 +24,16 @@ class DnsOverQuicClient(
      * and fallback mechanisms to ensure high-performance DNS resolution.
      */
     suspend fun resolve(dnsQuery: ByteArray, dnsIp: String): ByteArray? = withContext(Dispatchers.IO) {
-        DnsVpnService.log(LogType.INFO, "RESOLVER", "Backup DoQ: Attempting purely Kotlin fallback resolution to $dnsIp...")
+        DnsVpnService.log(LogType.INFO, "RESOLVER", "Backup DoQ: Attempting Kotlin QUIC resolution to $dnsIp...")
         
-        // Try Port 784 first, then fallback to 853
-        var response = tryPortResolution(dnsQuery, dnsIp, DEFAULT_DOQ_PORT)
-        if (response == null) {
-            DnsVpnService.log(LogType.WARNING, "RESOLVER", "Backup DoQ: Port $DEFAULT_DOQ_PORT failed. Trying alternative Port $BACKUP_DOQ_PORT...")
-            response = tryPortResolution(dnsQuery, dnsIp, BACKUP_DOQ_PORT)
-        }
-        
-        if (response != null && response.isNotEmpty()) {
-            DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Backup DoQ: Successfully resolved query over Kotlin QUIC fallback stream.")
-            return@withContext response
+        // Try Port 784 first, then 853, then 443
+        val ports = intArrayOf(DEFAULT_DOQ_PORT, BACKUP_DOQ_PORT, HTTP3_DOQ_PORT)
+        for (port in ports) {
+            val response = tryPortResolution(dnsQuery, dnsIp, port)
+            if (response != null && response.isNotEmpty()) {
+                DnsVpnService.log(LogType.SUCCESS, "RESOLVED", "Backup DoQ: Successfully resolved query over Kotlin QUIC stream (port $port).")
+                return@withContext response
+            }
         }
         
         null
@@ -46,8 +45,11 @@ class DnsOverQuicClient(
             socket = DatagramSocket()
             protectSocket(socket)
             socket.soTimeout = TIMEOUT_MS
-            socket.sendBufferSize = 65536
-            socket.receiveBufferSize = 65536
+            socket.sendBufferSize = 131072
+            socket.receiveBufferSize = 131072
+            try {
+                socket.trafficClass = 0x28 // DSCP Expedited Forwarding
+            } catch (_: Exception) {}
 
             val address = InetAddress.getByName(dnsIp)
             
@@ -81,8 +83,8 @@ class DnsOverQuicClient(
             socket.receive(receivePacket)
 
             val recvLen = receivePacket.length
-            if (recvLen > quicHeader.size + lengthBytes.size) {
-                // Extract the DNS query response payload by matching transaction ID
+            val headerOffset = quicHeader.size + lengthBytes.size
+            if (recvLen > headerOffset + 12) {
                 val dnsQueryTxId = ((dnsQuery[0].toInt() and 0xFF) shl 8) or (dnsQuery[1].toInt() and 0xFF)
                 
                 var dnsStartOffset = -1
@@ -98,6 +100,16 @@ class DnsOverQuicClient(
                     val dnsResponseLen = recvLen - dnsStartOffset
                     val dnsResponse = ByteArray(dnsResponseLen)
                     System.arraycopy(buffer, dnsStartOffset, dnsResponse, 0, dnsResponseLen)
+                    return dnsResponse
+                } else {
+                    // Fallback: extract payload right after header offset and overwrite TX ID
+                    val dnsResponseLen = recvLen - headerOffset
+                    val dnsResponse = ByteArray(dnsResponseLen)
+                    System.arraycopy(buffer, headerOffset, dnsResponse, 0, dnsResponseLen)
+                    if (dnsResponse.size >= 2) {
+                        dnsResponse[0] = dnsQuery[0]
+                        dnsResponse[1] = dnsQuery[1]
+                    }
                     return dnsResponse
                 }
             }

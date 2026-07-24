@@ -23,6 +23,7 @@ class CellularTelemetryTracker(private val context: Context) {
     companion object {
         private const val TAG = "CellularTelemetry"
         private const val POLL_INTERVAL_MS = 10000L // 10 seconds polling interval for background safety
+        private const val RRC_KEEP_ALIVE_INTERVAL_MS = 1800L // Keep RRC state in RRC_CONNECTED (prevents DRX modem sleep)
         private const val DELTA_RSRP_THRESHOLD = 3   // Dispatch on > 3 dBm change
         private const val DELTA_SINR_THRESHOLD = 2   // Dispatch on > 2 dB change
         private const val UNAVAILABLE = 2147483647   // Standard representation of Integer.MAX_VALUE / CellSignalStrength.UNAVAILABLE
@@ -32,6 +33,7 @@ class CellularTelemetryTracker(private val context: Context) {
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private var trackerScope: CoroutineScope? = null
     private var backgroundExecutor: ExecutorService? = null
+    private var rrcPinningJob: Job? = null
 
     // Thread-safe cached metrics to check for delta changes and prevent JNI overhead
     private val lastRsrp = AtomicInteger(-140)
@@ -71,6 +73,16 @@ class CellularTelemetryTracker(private val context: Context) {
                     Log.e(TAG, "Error polling cellular metrics in background: ${e.message}", e)
                 }
                 delay(POLL_INTERVAL_MS)
+            }
+        }
+
+        // Launch RRC Pinning loop to keep 5G/4G modem in active state (RRC_CONNECTED)
+        rrcPinningJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    sendRrcKeepAlive()
+                } catch (_: Exception) {}
+                delay(RRC_KEEP_ALIVE_INTERVAL_MS)
             }
         }
     }
@@ -342,6 +354,37 @@ class CellularTelemetryTracker(private val context: Context) {
 
             // Dispatch to JNI shared library of the Rust core engine via FluxDnsEngine controller
             FluxDnsEngine.updateCellularMetrics(rsrp, sinr, cellId)
+        }
+    }
+
+    /**
+     * Sends ultra-lightweight zero-payload UDP probe to keep the 5G modem radio in RRC_CONNECTED state.
+     * Eliminates 20ms-80ms RRC wakeup latency spikes during online gaming.
+     */
+    private fun sendRrcKeepAlive() {
+        var socket: java.net.DatagramSocket? = null
+        try {
+            val multiPath = MultiPathManager.getInstance(context)
+            if (multiPath.isCellularConnected()) {
+                socket = java.net.DatagramSocket()
+                val cellNet = multiPath.getCellularNetwork()
+                if (cellNet != null) {
+                    try {
+                        cellNet.bindSocket(socket)
+                    } catch (_: Exception) {}
+                }
+                socket.soTimeout = 150
+                val dummyData = byteArrayOf(0x00)
+                val targetAddr = java.net.InetAddress.getByName("1.1.1.1")
+                val packet = java.net.DatagramPacket(dummyData, dummyData.size, targetAddr, 53)
+                socket.send(packet)
+            }
+        } catch (_: Exception) {
+            // Non-critical keepalive, ignore network errors silently
+        } finally {
+            try {
+                socket?.close()
+            } catch (_: Exception) {}
         }
     }
 

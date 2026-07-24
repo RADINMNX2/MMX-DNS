@@ -348,10 +348,23 @@ class DnsVpnService : VpnService() {
         log(LogType.INFO, "PROTOCOL", "Selected transport protocol: $protocol")
 
         val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID, 
+                    notification, 
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to startForeground with explicit type, falling back to basic notification", e)
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (ex: Exception) {
+                Log.e(TAG, "Fatal error starting foreground service", ex)
+            }
         }
 
         isRunning = true
@@ -815,10 +828,21 @@ class DnsVpnService : VpnService() {
         if (dnsQuery.size < 12) return "unknown"
         val sb = StringBuilder()
         var pos = 12
+        var jumped = false
+        var count = 0
         try {
-            while (pos < dnsQuery.size) {
+            while (pos < dnsQuery.size && count < 20) {
+                count++
                 val len = dnsQuery[pos].toInt() and 0xFF
                 if (len == 0) break
+                // Check if pointer (0xC0 prefix)
+                if ((len and 0xC0) == 0xC0) {
+                    if (pos + 1 >= dnsQuery.size) break
+                    val pointer = ((len and 0x3F) shl 8) or (dnsQuery[pos + 1].toInt() and 0xFF)
+                    pos = pointer
+                    jumped = true
+                    continue
+                }
                 if (pos + 1 + len > dnsQuery.size) return "invalid"
                 if (sb.isNotEmpty()) {
                     sb.append(".")
@@ -845,7 +869,8 @@ class DnsVpnService : VpnService() {
             "scorecardresearch.com", "taboola.com", "outbrain.com", "moatads.com",
             "criteo.com", "adform.net", "rubiconproject.com", "flurry.com",
             "quantserve.com", "advertising.com", "adnxs.com", "telemetry",
-            "adservice", "analytics.facebook.com"
+            "adservice", "analytics.facebook.com", "metrics.icloud.com",
+            "crashlytics.com", "inmobi.com", "chartboost.com", "vungle.com"
         )
 
         if (adKeywords.any { lower.contains(it) }) return true
@@ -869,6 +894,9 @@ class DnsVpnService : VpnService() {
         return resp
     }
 
+    // High-performance thread-local buffer pool for zero-allocation packet sending
+    private val packetBufferPool = ThreadLocal.withInitial { ByteBuffer.allocateDirect(4096) }
+
     private fun sendDnsResponsePacket(
         response: ByteArray,
         srcIpBytes: ByteArray,
@@ -880,10 +908,17 @@ class DnsVpnService : VpnService() {
         ipOffset: Int = 0
     ) {
         val headerOffset = if (ipOffset == 4) 4 else 0
-        if (isIpv6) {
-            val responsePacketSize = headerOffset + 40 + 8 + response.size
-            val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+        val responsePacketSize = headerOffset + (if (isIpv6) 40 else 20) + 8 + response.size
+        
+        val responseBufferFull = packetBufferPool.get().apply {
+            clear()
+            if (capacity() < responsePacketSize) {
+                // Resize buffer if unusually large DNS packet
+                packetBufferPool.set(ByteBuffer.allocateDirect(responsePacketSize + 1024))
+            }
+        }
 
+        if (isIpv6) {
             if (headerOffset == 4) {
                 responseBufferFull.put(0, 0x00.toByte())
                 responseBufferFull.put(1, 0.toByte())
@@ -916,13 +951,15 @@ class DnsVpnService : VpnService() {
             responseBufferFull.position(headerOffset + 48)
             responseBufferFull.put(response)
 
+            val tempByteArray = ByteArray(responsePacketSize)
+            responseBufferFull.position(0)
+            responseBufferFull.get(tempByteArray, 0, responsePacketSize)
+
             synchronized(output) {
-                output.write(responseBufferFull.array(), 0, responsePacketSize)
+                output.write(tempByteArray, 0, responsePacketSize)
             }
         } else {
             val responseIpHeaderLength = 20
-            val responsePacketSize = headerOffset + responseIpHeaderLength + 8 + response.size
-            val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
 
             if (headerOffset == 4) {
                 responseBufferFull.put(0, 0x00.toByte())
@@ -953,11 +990,16 @@ class DnsVpnService : VpnService() {
             responseBufferFull.position(headerOffset + 28)
             responseBufferFull.put(response)
 
-            val ipChecksum = calculateChecksum(responseBufferFull.array(), headerOffset, 20)
-            responseBufferFull.putShort(headerOffset + 10, ipChecksum)
+            val tempByteArray = ByteArray(responsePacketSize)
+            responseBufferFull.position(0)
+            responseBufferFull.get(tempByteArray, 0, responsePacketSize)
+
+            val ipChecksum = calculateChecksum(tempByteArray, headerOffset, 20)
+            tempByteArray[headerOffset + 10] = ((ipChecksum.toInt() shr 8) and 0xFF).toByte()
+            tempByteArray[headerOffset + 11] = (ipChecksum.toInt() and 0xFF).toByte()
 
             synchronized(output) {
-                output.write(responseBufferFull.array(), 0, responsePacketSize)
+                output.write(tempByteArray, 0, responsePacketSize)
             }
         }
     }

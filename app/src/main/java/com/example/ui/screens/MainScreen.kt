@@ -72,6 +72,8 @@ fun MainScreen(
     val activeSecondaryDns by viewModel.activeSecondaryDns.collectAsStateWithLifecycle()
     val selectedProfile by viewModel.selectedProfile.collectAsStateWithLifecycle()
     val pingMs by viewModel.pingResult.collectAsStateWithLifecycle()
+    val jitterMs by viewModel.jitterMs.collectAsStateWithLifecycle()
+    val packetLossPercent by viewModel.packetLossPercent.collectAsStateWithLifecycle()
     val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
     val profiles by viewModel.allProfiles.collectAsStateWithLifecycle()
     val gamingApps by viewModel.allGamingApps.collectAsStateWithLifecycle()
@@ -305,7 +307,10 @@ fun MainScreen(
                         },
                         onDeleteGamingApp = { packageName ->
                             viewModel.deleteGamingApp(packageName)
-                        }
+                        },
+                        pingMs = pingMs,
+                        jitterMs = jitterMs,
+                        packetLossPercent = packetLossPercent
                     )
                 }
                 2 -> {

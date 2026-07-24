@@ -118,6 +118,9 @@ class MultiPathManager(private val context: Context) {
         return cellularNetwork != null
     }
 
+    fun getWifiNetwork(): Network? = wifiNetwork
+    fun getCellularNetwork(): Network? = cellularNetwork
+
     /**
      * Binds a native socket file descriptor to the Wi-Fi network routing path.
      */

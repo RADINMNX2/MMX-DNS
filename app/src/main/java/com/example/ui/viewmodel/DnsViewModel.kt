@@ -91,6 +91,17 @@ class DnsViewModel(
     private val _pingResult = MutableStateFlow<Int?>(null)
     val pingResult: StateFlow<Int?> = _pingResult.asStateFlow()
 
+    private val _jitterMs = MutableStateFlow<Int>(0)
+    val jitterMs: StateFlow<Int> = _jitterMs.asStateFlow()
+
+    private val _packetLossPercent = MutableStateFlow<Float>(0f)
+    val packetLossPercent: StateFlow<Float> = _packetLossPercent.asStateFlow()
+
+    private val _pingHistory = MutableStateFlow<List<Int>>(emptyList())
+    val pingHistory: StateFlow<List<Int>> = _pingHistory.asStateFlow()
+
+    private val pingHistoryBuffer = java.util.concurrent.CopyOnWriteArrayList<Int?>()
+
     private val _isPinging = MutableStateFlow(false)
     val isPinging: StateFlow<Boolean> = _isPinging.asStateFlow()
 
@@ -447,13 +458,45 @@ class DnsViewModel(
                 val endTime = System.currentTimeMillis()
                 val rtt = (endTime - startTime).toInt()
                 _pingResult.value = rtt
+                recordPingSample(rtt)
             } catch (e: Exception) {
                 Log.w("DnsViewModel", "Failed to ping DNS server: $targetServer", e)
                 _pingResult.value = null // represent Timeout/Offline
+                recordPingSample(null)
             } finally {
                 socket?.close()
                 _isPinging.value = false
             }
+        }
+    }
+
+    private fun recordPingSample(sample: Int?) {
+        pingHistoryBuffer.add(sample)
+        if (pingHistoryBuffer.size > 20) {
+            pingHistoryBuffer.removeAt(0)
+        }
+        
+        val validPings = pingHistoryBuffer.filterNotNull()
+        _pingHistory.value = validPings
+        
+        // Calculate Jitter = Mean Absolute Difference between consecutive valid ping samples
+        if (validPings.size >= 2) {
+            var diffSum = 0
+            for (i in 1 until validPings.size) {
+                diffSum += kotlin.math.abs(validPings[i] - validPings[i - 1])
+            }
+            _jitterMs.value = diffSum / (validPings.size - 1)
+        } else {
+            _jitterMs.value = 0
+        }
+
+        // Calculate Packet Loss %
+        val totalProbes = pingHistoryBuffer.size
+        if (totalProbes > 0) {
+            val lostProbes = pingHistoryBuffer.count { it == null }
+            _packetLossPercent.value = (lostProbes.toFloat() / totalProbes.toFloat()) * 100f
+        } else {
+            _packetLossPercent.value = 0f
         }
     }
 }

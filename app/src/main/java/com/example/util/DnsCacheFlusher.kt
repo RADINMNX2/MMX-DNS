@@ -13,9 +13,10 @@ object DnsCacheFlusher {
      * Executes reflection-based JVM cache clearing and process network binding toggles
      * to completely clear system and engine DNS caches upon state transition.
      */
-    fun flushAll(context: Context) {
+    fun flushAll(context: Context, controller: com.example.service.FluxResolverController? = null) {
         flushJvmCache()
         triggerNetworkDescriptorReset(context)
+        controller?.clearCache()
     }
 
     private fun flushJvmCache() {

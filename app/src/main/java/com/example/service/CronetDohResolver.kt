@@ -51,16 +51,18 @@ class CronetDohResolver(private val context: Context) {
             val uri = java.net.URI(serverUrl)
             val host = uri.host ?: return serverUrl
             val ip = when (host) {
-                "dns.google" -> "8.8.8.8"
-                "cloudflare-dns.com", "one.one.one.one" -> "1.1.1.1" // Use standard ultra-fast 1.1.1.1 instead of blocked 1.1.1.3
+                "dns.google", "dns.google.com" -> "8.8.8.8"
+                "cloudflare-dns.com", "one.one.one.one" -> "1.1.1.1"
                 "dns.quad9.net" -> "9.9.9.9"
                 "dns.adguard-dns.com", "dns.adguard.com" -> "94.140.14.14"
                 "dns.controld.com" -> "76.76.2.0"
+                "dns.nextdns.io" -> "45.90.28.0"
+                "free.shecan.ir" -> "178.22.122.100"
                 else -> host
             }
             if (ip != host) {
                 val portStr = if (uri.port != -1) ":${uri.port}" else ""
-                val path = uri.rawPath ?: "/dns-query"
+                val path = uri.rawPath.takeIf { !it.isNullOrEmpty() } ?: "/dns-query"
                 val query = if (uri.rawQuery != null) "?${uri.rawQuery}" else ""
                 val directUrl = "https://$ip$portStr$path$query"
                 Log.d(TAG, "Bootstrap bypass: mapped domain '$host' to direct IP URL: $directUrl")
@@ -76,46 +78,85 @@ class CronetDohResolver(private val context: Context) {
 
     /**
      * Asynchronously resolves a DNS query over HTTP/3 (or fallback to HTTP/2 TCP)
-     * using the direct IP URL to avoid the bootstrap chicken-and-egg problem.
+     * using direct IP URL to avoid the bootstrap chicken-and-egg problem.
+     * Falls back to standard HttpURLConnection POST if Cronet engine is unavailable.
      */
     suspend fun resolveQuery(query: ByteArray, serverUrl: String): ByteArray {
-        val engine = cronetEngine ?: throw IOException("Cronet engine not initialized")
-        
-        // Translate server URL to direct-IP to bypass DNS resolution loop
         val directIpUrl = convertToDirectIpUrl(serverUrl)
+        val engine = cronetEngine
 
-        return suspendCancellableCoroutine { continuation ->
-            try {
-                val callback = DohRequestCallback(continuation)
-                val requestBuilder = engine.newUrlRequestBuilder(
-                    directIpUrl,
-                    callback,
-                    executor
-                )
-                
-                requestBuilder.setHttpMethod("POST")
-                requestBuilder.addHeader("Content-Type", "application/dns-message")
-                requestBuilder.addHeader("Accept", "application/dns-message")
-                
-                val uploadDataProvider = UploadDataProviders.create(query)
-                requestBuilder.setUploadDataProvider(uploadDataProvider, executor)
-                
-                val request = requestBuilder.build()
-                
-                continuation.invokeOnCancellation {
+        if (engine == null) {
+            return resolveQueryHttpFallback(query, directIpUrl)
+        }
+
+        return try {
+            kotlinx.coroutines.withTimeout(2500) {
+                suspendCancellableCoroutine { continuation ->
                     try {
-                        request.cancel()
+                        val callback = DohRequestCallback(continuation)
+                        val requestBuilder = engine.newUrlRequestBuilder(
+                            directIpUrl,
+                            callback,
+                            executor
+                        )
+                        
+                        requestBuilder.setHttpMethod("POST")
+                        requestBuilder.addHeader("Content-Type", "application/dns-message")
+                        requestBuilder.addHeader("Accept", "application/dns-message")
+                        
+                        val uploadDataProvider = UploadDataProviders.create(query)
+                        requestBuilder.setUploadDataProvider(uploadDataProvider, executor)
+                        
+                        val request = requestBuilder.build()
+                        
+                        continuation.invokeOnCancellation {
+                            try {
+                                request.cancel()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error canceling Cronet request", e)
+                            }
+                        }
+                        
+                        request.start()
                     } catch (e: Exception) {
-                        Log.w(TAG, "Error canceling Cronet request", e)
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(e)
+                        }
                     }
                 }
-                
-                request.start()
-            } catch (e: Exception) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(e)
-                }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Cronet DoH request failed or timed out (${e.message}). Triggering HttpURLConnection fallback...")
+            resolveQueryHttpFallback(query, directIpUrl)
+        }
+    }
+
+    private suspend fun resolveQueryHttpFallback(query: ByteArray, directIpUrl: String): ByteArray = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            val url = java.net.URL(directIpUrl)
+            connection = url.openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 2000
+            connection.readTimeout = 2000
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/dns-message")
+            connection.setRequestProperty("Accept", "application/dns-message")
+
+            connection.outputStream.use { os ->
+                os.write(query)
+                os.flush()
+            }
+
+            if (connection.responseCode == 200) {
+                connection.inputStream.use { inputStream ->
+                    inputStream.readBytes()
+                }
+            } else {
+                throw IOException("HttpURLConnection DoH returned HTTP code ${connection.responseCode}")
+            }
+        } finally {
+            connection?.disconnect()
         }
     }
 
