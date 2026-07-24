@@ -7,5 +7,6 @@ import androidx.room.PrimaryKey
 data class GamingApp(
     @PrimaryKey val packageName: String,
     val name: String,
-    val isSelected: Boolean = false
+    val isSelected: Boolean = false,
+    val isMultiPathEnabled: Boolean = true
 )

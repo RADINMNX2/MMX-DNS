@@ -2,42 +2,35 @@
 /// Manages pre-allocated static ring/stack buffers to avoid heap allocation stutters.
 
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use crossbeam_queue::ArrayQueue;
 use std::ops::{Deref, DerefMut};
 
 pub const BUFFER_SIZE: usize = 65535;
 
-/// Pre-allocated buffer memory pool that lives for the lifetime of the application.
+/// Lock-free pre-allocated buffer memory pool that lives for the lifetime of the application.
 pub struct MemoryPool {
-    pool: Mutex<Vec<Box<[u8; BUFFER_SIZE]>>>,
+    pool: ArrayQueue<Box<[u8; BUFFER_SIZE]>>,
 }
 
 impl MemoryPool {
     /// Creates a memory pool with specified pre-allocated capacity
     pub fn new(capacity: usize) -> Self {
-        let mut initial = Vec::with_capacity(capacity);
+        let pool = ArrayQueue::new(capacity.max(256));
         for _ in 0..capacity {
-            initial.push(Box::new([0u8; BUFFER_SIZE]));
+            let _ = pool.push(Box::new([0u8; BUFFER_SIZE]));
         }
-        Self {
-            pool: Mutex::new(initial),
-        }
+        Self { pool }
     }
 
-    /// Acquires a pre-allocated buffer from the pool wrapped in an automatic `PoolGuard`.
+    /// Acquires a pre-allocated buffer lock-free from the queue wrapped in an automatic `PoolGuard`.
     pub fn acquire(&self) -> PoolGuard {
-        let mut guard = self.pool.lock().unwrap();
-        let buf = guard.pop().unwrap_or_else(|| Box::new([0u8; BUFFER_SIZE]));
+        let buf = self.pool.pop().unwrap_or_else(|| Box::new([0u8; BUFFER_SIZE]));
         PoolGuard { buf: Some(buf) }
     }
 
-    /// Releases a buffer back into the pool.
+    /// Releases a buffer back into the lock-free pool queue.
     pub fn release(&self, buf: Box<[u8; BUFFER_SIZE]>) {
-        let mut guard = self.pool.lock().unwrap();
-        // Keep pool size capped to prevent unbounded memory growth if temporary buffers are allocated under high load
-        if guard.len() < 512 {
-            guard.push(buf);
-        }
+        let _ = self.pool.push(buf);
     }
 }
 
@@ -125,5 +118,6 @@ impl PooledTask {
     }
 }
 
-/// Thread-safe global static memory pool initialized once with 128 buffers (totaling 8.38MB of static resident memory).
-pub static MEMORY_POOL: Lazy<MemoryPool> = Lazy::new(|| MemoryPool::new(128));
+/// Thread-safe global static memory pool initialized once with 256 buffers (totaling 16.7MB of static resident memory).
+pub static MEMORY_POOL: Lazy<MemoryPool> = Lazy::new(|| MemoryPool::new(256));
+

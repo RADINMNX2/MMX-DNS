@@ -9,7 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [DnsProfile::class, GamingApp::class], version = 3, exportSchema = false)
+@Database(entities = [DnsProfile::class, GamingApp::class], version = 4, exportSchema = false)
 abstract class DnsDatabase : RoomDatabase() {
     abstract fun dnsProfileDao(): DnsProfileDao
     abstract fun gamingAppDao(): GamingAppDao

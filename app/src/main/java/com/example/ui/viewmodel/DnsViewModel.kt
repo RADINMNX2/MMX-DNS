@@ -41,6 +41,12 @@ class DnsViewModel(
         }
     }
 
+    fun toggleGamingAppMultiPath(packageName: String, isMultiPathEnabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setGamingAppMultiPathEnabled(packageName, isMultiPathEnabled)
+        }
+    }
+
     fun addCustomGamingApp(name: String, packageName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertGamingApp(com.example.data.GamingApp(packageName = packageName, name = name, isSelected = true))
@@ -97,6 +103,17 @@ class DnsViewModel(
     private val _isGamingShieldEnabled = MutableStateFlow(true)
     val isGamingShieldEnabled: StateFlow<Boolean> = _isGamingShieldEnabled.asStateFlow()
 
+    private val _isMultiPathGlobalEnabled = MutableStateFlow(true)
+    val isMultiPathGlobalEnabled: StateFlow<Boolean> = _isMultiPathGlobalEnabled.asStateFlow()
+
+    fun setMultiPathGlobalEnabled(enabled: Boolean) {
+        _isMultiPathGlobalEnabled.value = enabled
+        context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("multipath_global_enabled", enabled)
+            .apply()
+    }
+
     fun setAppInForeground(foreground: Boolean) {
         _isAppInForeground.value = foreground
         if (!foreground) {
@@ -147,9 +164,10 @@ class DnsViewModel(
             DnsVpnService.log(com.example.service.LogType.ERROR, "CRASH", "Previous session terminated by unhandled exception:\n$savedCrash")
         }
 
-        // Load initial Gaming Shield setting
+        // Load initial Gaming Shield setting & MultiPath settings
         val prefs = context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
         _isGamingShieldEnabled.value = prefs.getBoolean("gaming_shield_enabled", true)
+        _isMultiPathGlobalEnabled.value = prefs.getBoolean("multipath_global_enabled", true)
 
         // Automatically fetch default/first profile and start periodic ping tests
         viewModelScope.launch {
@@ -237,18 +255,38 @@ class DnsViewModel(
                 context.startService(intent)
             }
         } else {
+            DnsVpnService.instance?.stopVpnDirectly()
             val intent = Intent(context, DnsVpnService::class.java).apply {
                 action = DnsVpnService.ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.e("DnsViewModel", "Failed to startService with ACTION_STOP", e)
+            }
+            try {
+                context.stopService(intent)
+            } catch (e: Exception) {
+                Log.e("DnsViewModel", "Failed to stopService", e)
+            }
         }
     }
 
     fun forceStopVpn() {
+        DnsVpnService.instance?.stopVpnDirectly()
         val intent = Intent(context, DnsVpnService::class.java).apply {
             action = DnsVpnService.ACTION_STOP
         }
-        context.startService(intent)
+        try {
+            context.startService(intent)
+        } catch (e: Exception) {
+            Log.e("DnsViewModel", "Failed to startService with ACTION_STOP", e)
+        }
+        try {
+            context.stopService(intent)
+        } catch (e: Exception) {
+            Log.e("DnsViewModel", "Failed to stopService", e)
+        }
     }
 
     fun deleteProfile(profile: DnsProfile) {

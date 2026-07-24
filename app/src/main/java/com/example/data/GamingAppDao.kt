@@ -20,6 +20,9 @@ interface GamingAppDao {
     @Query("UPDATE gaming_apps SET isSelected = :selected WHERE packageName = :packageName")
     suspend fun setAppSelected(packageName: String, selected: Boolean)
 
+    @Query("UPDATE gaming_apps SET isMultiPathEnabled = :enabled WHERE packageName = :packageName")
+    suspend fun setAppMultiPathEnabled(packageName: String, enabled: Boolean)
+
     @Query("DELETE FROM gaming_apps WHERE packageName = :packageName")
     suspend fun deleteApp(packageName: String)
 

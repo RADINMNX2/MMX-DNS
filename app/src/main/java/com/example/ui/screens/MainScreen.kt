@@ -79,6 +79,7 @@ fun MainScreen(
     val totalQueriesFiltered by viewModel.totalQueriesFiltered.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isGamingShieldEnabled by viewModel.isGamingShieldEnabled.collectAsStateWithLifecycle()
+    val isMultiPathGlobalEnabled by viewModel.isMultiPathGlobalEnabled.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -291,6 +292,11 @@ fun MainScreen(
                         onToggleGamingApp = { packageName, isSelected ->
                             viewModel.toggleGamingAppSelection(packageName, isSelected)
                         },
+                        onToggleGamingAppMultiPath = { packageName, isMultiPathEnabled ->
+                            viewModel.toggleGamingAppMultiPath(packageName, isMultiPathEnabled)
+                        },
+                        isMultiPathGlobalEnabled = isMultiPathGlobalEnabled,
+                        onToggleMultiPathGlobal = { viewModel.setMultiPathGlobalEnabled(it) },
                         onAddCustomApp = { name, packageName ->
                             viewModel.addCustomGamingApp(name, packageName)
                         },

@@ -80,6 +80,8 @@ class DnsRepository(
 
     suspend fun setGamingAppSelected(packageName: String, selected: Boolean) = gamingAppDao.setAppSelected(packageName, selected)
 
+    suspend fun setGamingAppMultiPathEnabled(packageName: String, enabled: Boolean) = gamingAppDao.setAppMultiPathEnabled(packageName, enabled)
+
     suspend fun deleteGamingApp(packageName: String) = gamingAppDao.deleteApp(packageName)
 
     suspend fun deleteAllGamingApps() = gamingAppDao.deleteAllApps()

@@ -181,6 +181,9 @@ fun GamingShieldScreen(
     onToggleGamingShield: (Boolean) -> Unit,
     gamingApps: List<GamingApp>,
     onToggleGamingApp: (packageName: String, isSelected: Boolean) -> Unit,
+    onToggleGamingAppMultiPath: (packageName: String, isMultiPathEnabled: Boolean) -> Unit = { _, _ -> },
+    isMultiPathGlobalEnabled: Boolean = true,
+    onToggleMultiPathGlobal: (Boolean) -> Unit = {},
     onAddCustomApp: (name: String, packageName: String) -> Unit,
     onAddMultipleApps: (apps: List<GamingApp>) -> Unit = {},
     onDeleteGamingApp: (packageName: String) -> Unit = {},
@@ -479,6 +482,100 @@ fun GamingShieldScreen(
                     }
                 }
 
+                // --- DUAL-PATH WI-FI + MOBILE DATA ACCELERATION CARD ---
+                item {
+                    val multiPathBorderColor by animateColorAsState(
+                        targetValue = if (isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color(0x1F4C5D7E),
+                        animationSpec = tween(500), label = "multipath_border"
+                    )
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0x4408101E)),
+                        border = BorderStroke(1.dp, multiPathBorderColor)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(
+                                                if (isMultiPathGlobalEnabled) Color(0x2200F0FF) else Color(0x11FFFFFF),
+                                                CircleShape
+                                            )
+                                            .border(1.dp, if (isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color(0x33FFFFFF), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AltRoute,
+                                            contentDescription = "Dual-Path Engine",
+                                            tint = if (isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color(0xFF4C5D7E),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = "DUAL-PATH AGGREGATION",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = Color.White,
+                                                letterSpacing = 1.sp
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = if (isMultiPathGlobalEnabled) Color(0xFF00F0FF).copy(alpha = 0.2f) else Color(0x22FFFFFF)
+                                            ) {
+                                                Text(
+                                                    text = if (isMultiPathGlobalEnabled) "⚡ Wi-Fi + 5G Active" else "OFF",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color.Gray,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = "Races DNS packets concurrently across Wi-Fi & Cellular for zero lag spikes.",
+                                            fontSize = 10.sp,
+                                            color = Color.White.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
+
+                                Switch(
+                                    checked = isMultiPathGlobalEnabled,
+                                    onCheckedChange = { onToggleMultiPathGlobal(it) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF04060A),
+                                        checkedTrackColor = Color(0xFF00F0FF),
+                                        uncheckedThumbColor = Color(0xFF4C5D7E),
+                                        uncheckedTrackColor = Color(0xFF131724)
+                                    ),
+                                    modifier = Modifier.testTag("multipath_master_switch")
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // --- ACTION BUTTON: PICK INSTALLED APPS ---
                 item {
                     Button(
@@ -623,7 +720,7 @@ fun GamingShieldScreen(
                     }
                 } else {
                     items(filteredGamingApps, key = { it.packageName }) { app ->
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(Color(0x33080C16), RoundedCornerShape(16.dp))
@@ -634,60 +731,116 @@ fun GamingShieldScreen(
                                     ),
                                     RoundedCornerShape(16.dp)
                                 )
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
                             Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                FastAppIcon(
-                                    packageName = app.packageName,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = app.name,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (app.isSelected && isGamingShieldEnabled) Color(0xFF00FF88) else Color.White,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FastAppIcon(
+                                        packageName = app.packageName,
+                                        modifier = Modifier.size(40.dp)
                                     )
-                                    Text(
-                                        text = app.packageName,
-                                        fontSize = 9.sp,
-                                        color = Color.White.copy(alpha = 0.4f),
-                                        fontFamily = FontFamily.Monospace,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = app.name,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (app.isSelected && isGamingShieldEnabled) Color(0xFF00FF88) else Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = app.packageName,
+                                            fontSize = 9.sp,
+                                            color = Color.White.copy(alpha = 0.4f),
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(
+                                        checked = app.isSelected,
+                                        onCheckedChange = { onToggleGamingApp(app.packageName, it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color(0xFF04060A),
+                                            checkedTrackColor = Color(0xFF00FF88),
+                                            uncheckedThumbColor = Color(0xFF4C5D7E),
+                                            uncheckedTrackColor = Color(0xFF131724)
+                                        )
                                     )
+
+                                    IconButton(
+                                        onClick = { onDeleteGamingApp(app.packageName) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "Delete",
+                                            tint = Color(0xFFFF5252).copy(alpha = 0.7f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Switch(
-                                    checked = app.isSelected,
-                                    onCheckedChange = { onToggleGamingApp(app.packageName, it) },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFF04060A),
-                                        checkedTrackColor = Color(0xFF00FF88),
-                                        uncheckedThumbColor = Color(0xFF4C5D7E),
-                                        uncheckedTrackColor = Color(0xFF131724)
-                                    )
-                                )
-
-                                IconButton(
-                                    onClick = { onDeleteGamingApp(app.packageName) },
-                                    modifier = Modifier.size(32.dp)
+                            // --- PER-APP DUAL-PATH BOOST OPTION BUTTON ---
+                            if (app.isSelected && isGamingShieldEnabled) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (app.isMultiPathEnabled && isMultiPathGlobalEnabled) Color(0x2200F0FF) else Color(0x11FFFFFF))
+                                        .border(
+                                            0.5.dp,
+                                            if (app.isMultiPathEnabled && isMultiPathGlobalEnabled) Color(0xFF00F0FF).copy(alpha = 0.4f) else Color(0x15FFFFFF),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable {
+                                            onToggleGamingAppMultiPath(app.packageName, !app.isMultiPathEnabled)
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Delete",
-                                        tint = Color(0xFFFF5252).copy(alpha = 0.7f),
-                                        modifier = Modifier.size(18.dp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Bolt,
+                                            contentDescription = "Dual Path Boost",
+                                            tint = if (app.isMultiPathEnabled && isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color.Gray,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (app.isMultiPathEnabled && isMultiPathGlobalEnabled)
+                                                "Dual-Path Wi-Fi + 5G Boost Enabled"
+                                            else "Single Path Routing Mode",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (app.isMultiPathEnabled && isMultiPathGlobalEnabled) Color(0xFF00F0FF) else Color.Gray
+                                        )
+                                    }
+
+                                    Switch(
+                                        checked = app.isMultiPathEnabled,
+                                        onCheckedChange = { onToggleGamingAppMultiPath(app.packageName, it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color(0xFF04060A),
+                                            checkedTrackColor = Color(0xFF00F0FF),
+                                            uncheckedThumbColor = Color(0xFF4C5D7E),
+                                            uncheckedTrackColor = Color(0xFF131724)
+                                        ),
+                                        modifier = Modifier.scale(0.75f)
                                     )
                                 }
                             }
