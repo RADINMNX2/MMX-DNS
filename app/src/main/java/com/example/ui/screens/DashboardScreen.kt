@@ -53,6 +53,7 @@ fun DashboardScreen(
     pingMs: Int?,
     isPinging: Boolean,
     totalQueriesResolved: Int,
+    totalQueriesFiltered: Int = 0,
     connectionUptime: String,
     onToggleVpn: () -> Unit,
     modifier: Modifier = Modifier
@@ -588,7 +589,7 @@ fun DashboardScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = String.format("%,d", totalQueriesResolved),
+                                text = String.format("%,d", totalQueriesFiltered),
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Black,
                                 color = Color.White,

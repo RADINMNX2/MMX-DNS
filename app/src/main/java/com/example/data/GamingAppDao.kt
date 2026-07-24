@@ -19,4 +19,10 @@ interface GamingAppDao {
 
     @Query("UPDATE gaming_apps SET isSelected = :selected WHERE packageName = :packageName")
     suspend fun setAppSelected(packageName: String, selected: Boolean)
+
+    @Query("DELETE FROM gaming_apps WHERE packageName = :packageName")
+    suspend fun deleteApp(packageName: String)
+
+    @Query("DELETE FROM gaming_apps")
+    suspend fun deleteAllApps()
 }

@@ -59,7 +59,7 @@ abstract class DnsDatabase : RoomDatabase() {
                             )
                             dao.insertProfile(
                                 DnsProfile(
-                                    name = "Radar Game (رادار گیم)",
+                                    name = "Radar Game",
                                     primaryDns = "10.202.10.10",
                                     secondaryDns = "10.202.10.11",
                                     enableIpv6 = true,
@@ -71,7 +71,7 @@ abstract class DnsDatabase : RoomDatabase() {
                             )
                             dao.insertProfile(
                                 DnsProfile(
-                                    name = "Shecan (شکن)",
+                                    name = "Shecan DNS",
                                     primaryDns = "178.22.122.100",
                                     secondaryDns = "185.51.200.2",
                                     enableIpv6 = true,
@@ -83,7 +83,7 @@ abstract class DnsDatabase : RoomDatabase() {
                             )
                             dao.insertProfile(
                                 DnsProfile(
-                                    name = "Electro (الکترون)",
+                                    name = "Electro DNS",
                                     primaryDns = "78.157.42.100",
                                     secondaryDns = "78.157.42.101",
                                     enableIpv6 = false,

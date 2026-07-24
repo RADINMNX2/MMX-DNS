@@ -115,6 +115,9 @@ class DnsVpnService : VpnService() {
         private val _totalQueriesResolved = MutableStateFlow(0)
         val totalQueriesResolved: StateFlow<Int> = _totalQueriesResolved.asStateFlow()
 
+        private val _totalQueriesFiltered = MutableStateFlow(0)
+        val totalQueriesFiltered: StateFlow<Int> = _totalQueriesFiltered.asStateFlow()
+
         private val _logs = MutableStateFlow<List<DnsLogEntry>>(emptyList())
         val logs: StateFlow<List<DnsLogEntry>> = _logs.asStateFlow()
 
@@ -789,6 +792,118 @@ class DnsVpnService : VpnService() {
         }
     }
 
+    private fun isDomainFiltered(domain: String, profileName: String): Boolean {
+        if (domain == "unknown" || domain.isEmpty() || domain == "parse_error" || domain == "invalid") return false
+        val lower = domain.lowercase()
+
+        val adKeywords = listOf(
+            "doubleclick.net", "adservice.google", "admob.com", "applovin.com",
+            "unityads.unity3d.com", "adjust.com", "appsflyer.com", "bugsnag.com",
+            "googlesyndication.com", "google-analytics.com", "popads.net",
+            "scorecardresearch.com", "taboola.com", "outbrain.com", "moatads.com",
+            "criteo.com", "adform.net", "rubiconproject.com", "flurry.com",
+            "quantserve.com", "advertising.com", "adnxs.com", "telemetry",
+            "adservice", "analytics.facebook.com"
+        )
+
+        if (adKeywords.any { lower.contains(it) }) return true
+
+        if (profileName.contains("AdGuard", ignoreCase = true) || profileName.contains("Blocks Ads", ignoreCase = true)) {
+            if (lower.startsWith("ad.") || lower.contains(".ads.") || lower.contains("tracker") || lower.contains("analytics")) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun createNxdomainResponse(query: ByteArray): ByteArray {
+        if (query.size < 12) return query
+        val resp = query.copyOf()
+        resp[2] = 0x81.toByte() // Response, RD, RA
+        resp[3] = 0x83.toByte() // RCODE = 3 (NXDOMAIN)
+        resp[6] = 0.toByte()    // Answers = 0
+        resp[7] = 0.toByte()
+        return resp
+    }
+
+    private fun sendDnsResponsePacket(
+        response: ByteArray,
+        srcIpBytes: ByteArray,
+        dstIpBytes: ByteArray,
+        srcPort: Int,
+        dstPort: Int,
+        output: FileOutputStream,
+        isIpv6: Boolean
+    ) {
+        if (isIpv6) {
+            val responsePacketSize = 40 + 8 + response.size
+            val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+
+            responseBufferFull.put(0, 0x60.toByte())
+            responseBufferFull.put(1, 0.toByte())
+            responseBufferFull.put(2, 0.toByte())
+            responseBufferFull.put(3, 0.toByte())
+
+            val payloadLen = 8 + response.size
+            responseBufferFull.put(4, ((payloadLen shr 8) and 0xFF).toByte())
+            responseBufferFull.put(5, (payloadLen and 0xFF).toByte())
+
+            responseBufferFull.put(6, 17.toByte()) // UDP
+            responseBufferFull.put(7, 64.toByte()) // Hop Limit
+
+            responseBufferFull.position(8)
+            responseBufferFull.put(dstIpBytes)
+            responseBufferFull.put(srcIpBytes)
+
+            responseBufferFull.position(40)
+            responseBufferFull.putShort(dstPort.toShort())
+            responseBufferFull.putShort(srcPort.toShort())
+            responseBufferFull.putShort((8 + response.size).toShort())
+            responseBufferFull.putShort(0.toShort())
+
+            responseBufferFull.position(48)
+            responseBufferFull.put(response)
+
+            synchronized(output) {
+                output.write(responseBufferFull.array(), 0, responsePacketSize)
+            }
+        } else {
+            val responseIpHeaderLength = 20
+            val responsePacketSize = responseIpHeaderLength + 8 + response.size
+            val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
+
+            responseBufferFull.put(0, 0x45.toByte())
+            responseBufferFull.put(1, 0.toByte())
+            responseBufferFull.putShort(2, responsePacketSize.toShort())
+            responseBufferFull.putShort(4, 0.toShort())
+            responseBufferFull.putShort(6, 0x4000.toShort())
+            responseBufferFull.put(8, 64.toByte())
+            responseBufferFull.put(9, 17.toByte())
+            responseBufferFull.putShort(10, 0.toShort())
+
+            responseBufferFull.position(12)
+            responseBufferFull.put(dstIpBytes)
+            responseBufferFull.put(srcIpBytes)
+
+            responseBufferFull.position(20)
+            responseBufferFull.putShort(dstPort.toShort())
+            responseBufferFull.putShort(srcPort.toShort())
+            responseBufferFull.putShort((8 + response.size).toShort())
+            responseBufferFull.putShort(0.toShort())
+
+            responseBufferFull.position(28)
+            responseBufferFull.put(response)
+
+            val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
+            responseBufferFull.putShort(10, ipChecksum)
+
+            synchronized(output) {
+                output.write(responseBufferFull.array(), 0, responsePacketSize)
+            }
+        }
+    }
+
     private suspend fun resolveDnsQueryAndReply(
         dnsQuery: ByteArray,
         srcIpBytes: ByteArray,
@@ -806,97 +921,42 @@ class DnsVpnService : VpnService() {
     ) {
         val domain = parseDnsQueryName(dnsQuery)
         val ipVer = if (isIpv6) "IPv6" else "IPv4"
-        log(LogType.INFO, "QUERY", "Requested: $domain ($ipVer) via 3-Tier Controller")
+        val activeProfile = _activeProfileName.value
 
+        // 1. Check Filter / Block Rule
+        if (isDomainFiltered(domain, activeProfile)) {
+            _totalQueriesFiltered.value++
+            log(
+                LogType.WARNING,
+                "FILTERED",
+                "🛡️ [DNS FILTERED] Domain '$domain' ($ipVer) blocked by Cyber Shield Policy ($activeProfile). Category: Ads & Telemetry -> Returned 0.0.0.0 (NXDOMAIN)"
+            )
+            val filteredResp = createNxdomainResponse(dnsQuery)
+            try {
+                sendDnsResponsePacket(filteredResp, srcIpBytes, dstIpBytes, srcPort, dstPort, output, isIpv6)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending filtered DNS response", e)
+            }
+            return
+        }
+
+        // 2. Query Log
+        log(LogType.INFO, "QUERY", "Requested: $domain ($ipVer) via 3-Tier Engine ($activeProfile)")
+
+        // 3. Resolve Query
         val response = resolverController.resolve(dnsQuery, primaryDns, secondaryDns, enableIpv6, primaryIpv6, secondaryIpv6, domain, protocol)
 
         if (response != null) {
             try {
-                if (isIpv6) {
-                    val responsePacketSize = 40 + 8 + response.size
-                    val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
-
-                    // IPv6 Header Setup
-                    responseBufferFull.put(0, 0x60.toByte()) // Version 6, Traffic Class/Flow Label 0
-                    responseBufferFull.put(1, 0.toByte())
-                    responseBufferFull.put(2, 0.toByte())
-                    responseBufferFull.put(3, 0.toByte())
-
-                    // Payload Length (UDP Header (8) + DNS payload size)
-                    val payloadLen = 8 + response.size
-                    responseBufferFull.put(4, ((payloadLen shr 8) and 0xFF).toByte())
-                    responseBufferFull.put(5, (payloadLen and 0xFF).toByte())
-
-                    responseBufferFull.put(6, 17.toByte()) // Next Header: UDP (17)
-                    responseBufferFull.put(7, 64.toByte()) // Hop Limit: 64
-
-                    // Swap IPs (Destination becomes Source, Source becomes Destination)
-                    responseBufferFull.position(8)
-                    responseBufferFull.put(dstIpBytes) // Source
-                    responseBufferFull.put(srcIpBytes) // Destination
-
-                    // UDP Header Setup
-                    responseBufferFull.position(40)
-                    responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
-                    responseBufferFull.putShort(srcPort.toShort()) // Destination Port
-                    responseBufferFull.putShort((8 + response.size).toShort()) // Length
-                    responseBufferFull.putShort(0.toShort()) // Checksum (0 is valid in UDP)
-
-                    // DNS Payload
-                    responseBufferFull.position(48)
-                    responseBufferFull.put(response)
-
-                    synchronized(output) {
-                        output.write(responseBufferFull.array(), 0, responsePacketSize)
-                    }
-                } else {
-                    // Build reply IP and UDP packet
-                    val responseIpHeaderLength = 20
-                    val responsePacketSize = responseIpHeaderLength + 8 + response.size
-                    val responseBufferFull = ByteBuffer.allocate(responsePacketSize)
-
-                    // IP Header Setup
-                    responseBufferFull.put(0, 0x45.toByte()) // IPv4, IHL = 5 (20 bytes)
-                    responseBufferFull.put(1, 0.toByte()) // TOS
-                    responseBufferFull.putShort(2, responsePacketSize.toShort()) // Packet Length
-                    responseBufferFull.putShort(4, 0.toShort()) // Ident
-                    responseBufferFull.putShort(6, 0x4000.toShort()) // Flags (DF)
-                    responseBufferFull.put(8, 64.toByte()) // TTL
-                    responseBufferFull.put(9, 17.toByte()) // UDP Protocol
-                    responseBufferFull.putShort(10, 0.toShort()) // IP Checksum
-
-                    // Swap IPs (Destination becomes Source, Source becomes Destination)
-                    responseBufferFull.position(12)
-                    responseBufferFull.put(dstIpBytes)
-                    responseBufferFull.put(srcIpBytes)
-
-                    // UDP Header Setup
-                    responseBufferFull.position(20)
-                    responseBufferFull.putShort(dstPort.toShort()) // Source Port (53)
-                    responseBufferFull.putShort(srcPort.toShort()) // Destination Port
-                    responseBufferFull.putShort((8 + response.size).toShort()) // Length
-                    responseBufferFull.putShort(0.toShort()) // No checksum (0 is valid in UDP)
-
-                    // DNS Payload
-                    responseBufferFull.position(28)
-                    responseBufferFull.put(response)
-
-                    // Calculate IP checksum
-                    val ipChecksum = calculateChecksum(responseBufferFull.array(), 0, 20)
-                    responseBufferFull.putShort(10, ipChecksum)
-
-                    // Thread-safe synchronous write to local TUN
-                    synchronized(output) {
-                        output.write(responseBufferFull.array(), 0, responsePacketSize)
-                    }
-                }
+                sendDnsResponsePacket(response, srcIpBytes, dstIpBytes, srcPort, dstPort, output, isIpv6)
                 _totalQueriesResolved.value++
+                log(LogType.SUCCESS, "RESOLVED", "✅ [RESOLVED] Domain '$domain' ($ipVer) resolved via $protocol protocol ($activeProfile)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing back DNS response packet", e)
                 log(LogType.ERROR, "SYSTEM", "Error writing back DNS response packet: ${e.message}")
             }
         } else {
-            log(LogType.ERROR, "RESOLVER", "Failed to resolve $domain on all configured DNS servers!")
+            log(LogType.ERROR, "RESOLVER", "❌ [FAILED] Unable to resolve '$domain' ($ipVer) on configured servers ($activeProfile)")
         }
     }
 

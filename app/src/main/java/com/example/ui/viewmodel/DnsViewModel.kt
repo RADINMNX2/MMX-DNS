@@ -47,11 +47,24 @@ class DnsViewModel(
         }
     }
 
+    fun addMultipleGamingApps(apps: List<com.example.data.GamingApp>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertGamingApps(apps)
+        }
+    }
+
+    fun deleteGamingApp(packageName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteGamingApp(packageName)
+        }
+    }
+
     val vpnState: StateFlow<VpnState> = DnsVpnService.state
     val activeProfileName: StateFlow<String> = DnsVpnService.activeProfileName
     val activePrimaryDns: StateFlow<String> = DnsVpnService.activePrimaryDns
     val activeSecondaryDns: StateFlow<String> = DnsVpnService.activeSecondaryDns
     val totalQueriesResolved: StateFlow<Int> = DnsVpnService.totalQueriesResolved
+    val totalQueriesFiltered: StateFlow<Int> = DnsVpnService.totalQueriesFiltered
     val logs: StateFlow<List<com.example.service.DnsLogEntry>> = DnsVpnService.logs
 
     fun clearLogs() {
