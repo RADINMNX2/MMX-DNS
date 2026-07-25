@@ -42,8 +42,11 @@ object FluxDnsEngine {
             return false
         }
         return try {
-            // Detach fd so native owns its lifecycle and safely processes async read/write
-            startEngine(tunFd.detachFd(), primaryDns, secondaryDns, protocol)
+            // Duplicate the file descriptor for native code so Java's vpnInterface retains
+            // the primary descriptor and can properly close the TUN interface upon stopVpn().
+            val dupPfd = ParcelFileDescriptor.dup(tunFd.fileDescriptor)
+            val rawFd = dupPfd.detachFd()
+            startEngine(rawFd, primaryDns, secondaryDns, protocol)
         } catch (e: Exception) {
             Log.e(TAG, "Exception starting native engine: ${e.message}", e)
             false

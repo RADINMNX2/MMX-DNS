@@ -266,7 +266,23 @@ class DnsViewModel(
                 context.startService(intent)
             }
         } else {
-            DnsVpnService.instance?.stopVpnDirectly()
+            stopVpnInternal()
+        }
+    }
+
+    fun forceStopVpn() {
+        stopVpnInternal()
+    }
+
+    private fun stopVpnInternal() {
+        val serviceInstance = DnsVpnService.instance
+        if (serviceInstance != null) {
+            try {
+                serviceInstance.stopVpnDirectly()
+            } catch (e: Exception) {
+                Log.e("DnsViewModel", "Failed to stop VPN service directly", e)
+            }
+        } else {
             val intent = Intent(context, DnsVpnService::class.java).apply {
                 action = DnsVpnService.ACTION_STOP
             }
@@ -275,28 +291,6 @@ class DnsViewModel(
             } catch (e: Exception) {
                 Log.e("DnsViewModel", "Failed to startService with ACTION_STOP", e)
             }
-            try {
-                context.stopService(intent)
-            } catch (e: Exception) {
-                Log.e("DnsViewModel", "Failed to stopService", e)
-            }
-        }
-    }
-
-    fun forceStopVpn() {
-        DnsVpnService.instance?.stopVpnDirectly()
-        val intent = Intent(context, DnsVpnService::class.java).apply {
-            action = DnsVpnService.ACTION_STOP
-        }
-        try {
-            context.startService(intent)
-        } catch (e: Exception) {
-            Log.e("DnsViewModel", "Failed to startService with ACTION_STOP", e)
-        }
-        try {
-            context.stopService(intent)
-        } catch (e: Exception) {
-            Log.e("DnsViewModel", "Failed to stopService", e)
         }
     }
 

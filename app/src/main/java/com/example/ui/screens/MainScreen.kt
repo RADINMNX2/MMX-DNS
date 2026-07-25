@@ -17,12 +17,14 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Gamepad
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -239,6 +241,32 @@ fun MainScreen(
                             color = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
                         )
                     }
+
+                    // Settings & About Tab button
+                    val isSettingsActive = currentTab == 4
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { currentTab = 4 }
+                            .padding(vertical = 10.dp)
+                            .testTag("tab_settings")
+                    ) {
+                        Icon(
+                            imageVector = if (isSettingsActive) Icons.Filled.Settings else Icons.Outlined.Settings,
+                            contentDescription = "Settings and About",
+                            tint = if (isSettingsActive) Color(0xFFFF00A0) else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Settings",
+                            fontSize = 11.sp,
+                            fontWeight = if (isSettingsActive) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSettingsActive) Color(0xFFFF00A0) else Color.White.copy(alpha = 0.5f)
+                        )
+                    }
                 }
             }
         },
@@ -330,6 +358,9 @@ fun MainScreen(
                         logs = logs,
                         onClearLogs = { viewModel.clearLogs() }
                     )
+                }
+                4 -> {
+                    SettingsScreen()
                 }
             }
         }
