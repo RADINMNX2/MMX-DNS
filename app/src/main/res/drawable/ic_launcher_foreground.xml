@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:width="68dp"
-        android:height="68dp"
-        android:drawable="@drawable/img_mnx_tools_icon_1784968946026"
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/neon_dns_icon_1786453509587"
         android:gravity="center" />
 </layer-list>

@@ -53,7 +53,7 @@ class DnsTileService : TileService() {
                     tile.subtitle = "Optimizing latency"
                 }
             }
-            VpnState.DISCONNECTED -> {
+            VpnState.DISCONNECTED, VpnState.ERROR -> {
                 tile.state = Tile.STATE_INACTIVE
                 tile.label = "DNS Shield"
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
