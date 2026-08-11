@@ -15,12 +15,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 
 enum class VpnState {
     DISCONNECTED,
     CONNECTING,
-    CONNECTED
+    CONNECTED,
+    ERROR
 }
 
 enum class LogType {
@@ -39,6 +39,8 @@ class DnsVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var serviceJob: Job? = null
+    private val vpnLock = Any()
 
     companion object {
         private const val TAG = "DnsVpnService"
@@ -55,7 +57,7 @@ class DnsVpnService : VpnService() {
         const val EXTRA_PRIMARY_IPV6 = "primary_ipv6"
         const val EXTRA_SECONDARY_IPV6 = "secondary_ipv6"
         const val EXTRA_PROFILE_NAME = "profile_name"
-        const val EXTRA_PROTOCOL = "protocol" // Values: "DoH", "DoT", "UDP"
+        const val EXTRA_PROTOCOL = "protocol" // Used for UI logging (Engine does not utilize this currently)
         const val EXTRA_SMART_ROUTING_ENABLED = "smart_routing_enabled"
         const val EXTRA_FIXED_EGRESS_IP = "fixed_egress_ip"
 
@@ -133,15 +135,16 @@ class DnsVpnService : VpnService() {
             stopVpn()
             return START_NOT_STICKY
         } else if (action == ACTION_START) {
-            val primary = intent.getStringExtra(EXTRA_PRIMARY_DNS) ?: "8.8.8.8"
-            val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: "8.8.4.4"
+            val primary = intent.getStringExtra(EXTRA_PRIMARY_DNS)?.takeIf { it.isNotBlank() } ?: "8.8.8.8"
+            val secondary = intent.getStringExtra(EXTRA_SECONDARY_DNS) ?: ""
             val enableIpv6 = intent.getBooleanExtra(EXTRA_ENABLE_IPV6, false)
             val primaryIpv6 = intent.getStringExtra(EXTRA_PRIMARY_IPV6) ?: ""
             val secondaryIpv6 = intent.getStringExtra(EXTRA_SECONDARY_IPV6) ?: ""
             val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Custom"
             val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "UDP"
             val smartRouting = intent.getBooleanExtra(EXTRA_SMART_ROUTING_ENABLED, false)
-            val fixedEgressIp = intent.getStringExtra(EXTRA_FIXED_EGRESS_IP) ?: "45.79.112.20"
+            val fixedEgressIp = intent.getStringExtra(EXTRA_FIXED_EGRESS_IP) ?: ""
+            
             startVpn(primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, name, protocol, smartRouting, fixedEgressIp)
             return START_STICKY
         }
@@ -160,6 +163,13 @@ class DnsVpnService : VpnService() {
         super.onDestroy()
     }
 
+    private fun isValidIp(ip: String): Boolean {
+        if (ip.isEmpty()) return false
+        val isIpv4 = ip.matches(Regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))
+        val isIpv6 = ip.contains(":") && ip.length > 2
+        return isIpv4 || isIpv6
+    }
+
     private fun startVpn(
         primaryDns: String,
         secondaryDns: String,
@@ -169,9 +179,17 @@ class DnsVpnService : VpnService() {
         profileName: String = "Custom",
         protocol: String = "UDP",
         smartRoutingEnabled: Boolean = false,
-        fixedEgressIp: String = "45.79.112.20"
-    ) {
-        if (isRunning) stopVpn()
+        fixedEgressIp: String = ""
+    ) = synchronized(vpnLock) {
+        if (isRunning) {
+            stopVpnInternal()
+        }
+
+        if (!isValidIp(primaryDns)) {
+            log(LogType.ERROR, "VALIDATION", "Invalid primary DNS IP: $primaryDns")
+            _state.value = VpnState.ERROR
+            return@synchronized
+        }
 
         _state.value = VpnState.CONNECTING
         _activeProfileName.value = profileName
@@ -191,117 +209,144 @@ class DnsVpnService : VpnService() {
 
         val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Use CONNECTED_DEVICE which is more appropriate for VPN connections that are not strictly exempt
                 startForeground(
                     NOTIFICATION_ID, 
                     notification, 
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to startForeground", e)
-            startForeground(NOTIFICATION_ID, notification)
+            Log.e(TAG, "Failed to startForeground with type", e)
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (fallbackEx: Exception) {
+                Log.e(TAG, "Fallback startForeground also failed", fallbackEx)
+            }
         }
 
         isRunning = true
-        serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-        serviceScope.launch {
-            try {
-                val builder = Builder()
-                builder.setSession("NEON DNS")
-                builder.setMtu(1360) // Gaming MTU
-                builder.addAddress("10.0.0.2", 32)
-                
-                builder.addDnsServer(primaryDns)
-                if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-                    builder.addDnsServer(secondaryDns)
-                }
-
-                if (enableIpv6) {
-                    try {
-                        builder.addAddress("fd00:1::2", 128)
-                        if (primaryIpv6.isNotEmpty()) builder.addDnsServer(primaryIpv6)
-                        if (secondaryIpv6.isNotEmpty()) builder.addDnsServer(secondaryIpv6)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed IPv6 interface", e)
-                    }
-                }
-
+        serviceJob?.cancel()
+        serviceJob = serviceScope.launch {
+            var retries = 0
+            val maxRetries = 3
+            
+            while (isActive && isRunning && retries <= maxRetries) {
                 try {
-                    builder.addRoute(primaryDns, 32)
-                    if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns) {
-                        builder.addRoute(secondaryDns, 32)
+                    val builder = Builder()
+                    builder.setSession("NEON DNS")
+                    builder.setMtu(1360) // Gaming MTU
+                    builder.addAddress("10.0.0.2", 32)
+                    
+                    builder.addDnsServer(primaryDns)
+                    if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns && isValidIp(secondaryDns)) {
+                        builder.addDnsServer(secondaryDns)
                     }
-                    if (enableIpv6 && primaryIpv6.isNotEmpty()) {
-                        builder.addRoute(primaryIpv6, 128)
-                        if (secondaryIpv6.isNotEmpty()) builder.addRoute(secondaryIpv6, 128)
+
+                    if (enableIpv6) {
+                        try {
+                            builder.addAddress("fd00:1::2", 128)
+                            if (primaryIpv6.isNotEmpty() && isValidIp(primaryIpv6)) builder.addDnsServer(primaryIpv6)
+                            if (secondaryIpv6.isNotEmpty() && isValidIp(secondaryIpv6)) builder.addDnsServer(secondaryIpv6)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed IPv6 interface", e)
+                        }
+                    }
+
+                    try {
+                        builder.addRoute(primaryDns, 32)
+                        if (secondaryDns.isNotEmpty() && secondaryDns != primaryDns && isValidIp(secondaryDns)) {
+                            builder.addRoute(secondaryDns, 32)
+                        }
+                        if (enableIpv6 && primaryIpv6.isNotEmpty() && isValidIp(primaryIpv6)) {
+                            builder.addRoute(primaryIpv6, 128)
+                            if (secondaryIpv6.isNotEmpty() && isValidIp(secondaryIpv6)) builder.addRoute(secondaryIpv6, 128)
+                        }
+                        
+                        if (smartRoutingEnabled) {
+                            builder.addRoute("0.0.0.0", 0)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to add specific DNS routes", e)
+                    }
+
+                    val vpnInterfaceLocal = builder.establish()
+                    if (vpnInterfaceLocal == null) {
+                        Log.e(TAG, "Failed to establish VPN interface (null)")
+                        log(LogType.ERROR, "ENGINE", "Failed to establish interface (Revoked?)")
+                        _state.value = VpnState.ERROR
+                        break
                     }
                     
-                    if (smartRoutingEnabled) {
-                        // Route a wider range of traffic if smart routing is enabled to let Rust engine decide
-                        // For prototype, we'll route some common gaming blocks or just 0.0.0.0/0
-                        builder.addRoute("0.0.0.0", 0)
+                    synchronized(vpnLock) {
+                        vpnInterface?.close()
+                        vpnInterface = vpnInterfaceLocal
                     }
+
+                    _state.value = VpnState.CONNECTED
+                    Log.i(TAG, "VPN tunnel established successfully. Starting Rust Engine.")
+                    
+                    DnsCacheFlusher.flushAll(applicationContext)
+
+                    val fd = vpnInterfaceLocal.fd
+                    NeonDnsNative.startEngine(EngineConfig(tunFd = fd))
+                    NeonDnsNative.setSmartRouting(smartRoutingEnabled, fixedEgressIp)
+                    
+                    log(LogType.SUCCESS, "ENGINE", "Rust packet processing engine started successfully.")
+
+                    while (isActive && isRunning) {
+                        delay(2000)
+                        try {
+                            val stats = NeonDnsNative.getStatistics()
+                            _totalQueriesResolved.value = stats.totalQueries.toInt()
+                            
+                            if (smartRoutingEnabled) {
+                                _smartRoutingStatus.value = NeonDnsNative.getSmartRoutingStatus()
+                            }
+                        } catch (statEx: Exception) {
+                            Log.e(TAG, "Error fetching native stats", statEx)
+                        }
+                    }
+                    
+                    break // Clean exit from loop if isRunning became false
+
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to add specific DNS routes", e)
-                }
-
-                // Gaming Mode App filtering logic (omitted for brevity, assume full VPN if no apps)
-                // Just routing all traffic for DNS for now
-
-                val vpnInterfaceLocal = builder.establish()
-                if (vpnInterfaceLocal == null) {
-                    Log.e(TAG, "Failed to establish VPN interface (null)")
-                    _state.value = VpnState.DISCONNECTED
-                    return@launch
-                }
-                vpnInterface = vpnInterfaceLocal
-
-                _state.value = VpnState.CONNECTED
-                Log.i(TAG, "VPN tunnel established successfully. Starting Rust Engine.")
-                
-                DnsCacheFlusher.flushAll(applicationContext)
-
-                // Pass FD to Rust Core
-                val fd = vpnInterfaceLocal.fd
-                NeonDnsNative.startEngine(EngineConfig(tunFd = fd))
-                NeonDnsNative.setSmartRouting(smartRoutingEnabled, fixedEgressIp)
-                
-                log(LogType.SUCCESS, "ENGINE", "Rust packet processing engine started successfully.")
-
-                // Keep alive & poll stats
-                while (isRunning) {
-                    delay(2000)
-                    val stats = NeonDnsNative.getStatistics()
-                    _totalQueriesResolved.value = stats.totalQueries.toInt()
+                    retries++
+                    Log.e(TAG, "Error in VPN tunnel thread (Attempt $retries/$maxRetries)", e)
+                    log(LogType.ERROR, "ENGINE", "Transient error: ${e.message}")
                     
-                    if (smartRoutingEnabled) {
-                        _smartRoutingStatus.value = NeonDnsNative.getSmartRoutingStatus()
+                    try { NeonDnsNative.stopEngine() } catch (ex: Exception) {}
+                    synchronized(vpnLock) {
+                        try { vpnInterface?.close() } catch (ex: Exception) {}
+                        vpnInterface = null
                     }
+                    
+                    if (retries > maxRetries) {
+                        log(LogType.ERROR, "ENGINE", "Max retries reached. Shutting down.")
+                        _state.value = VpnState.ERROR
+                        break
+                    }
+                    delay(2000)
                 }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in VPN tunnel thread", e)
-                log(LogType.ERROR, "ENGINE", "Critical error in VPN thread: ${e.message}")
-                _state.value = VpnState.DISCONNECTED
-            } finally {
-                stopSelf()
+            }
+            
+            if (isRunning) {
+                stopSelf() // Only stop if it died unexpectedly
             }
         }
     }
 
-    private fun stopVpn() {
+    private fun stopVpnInternal() {
         isRunning = false
         _state.value = VpnState.DISCONNECTED
         _activeProfileName.value = "None"
         _activePrimaryDns.value = ""
         _activeSecondaryDns.value = ""
         _totalQueriesResolved.value = 0
-
-        if (instance === this) instance = null
+        serviceJob?.cancel()
 
         log(LogType.WARNING, "ENGINE", "Stopping NEON DNS Engine...")
 
@@ -311,17 +356,13 @@ class DnsVpnService : VpnService() {
             Log.e(TAG, "Failed to stop native engine", e)
         }
 
-        try {
-            vpnInterface?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to close VPN interface", e)
-        }
-        vpnInterface = null
-
-        try {
-            serviceScope.cancel()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to cancel scope", e)
+        synchronized(vpnLock) {
+            try {
+                vpnInterface?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to close VPN interface", e)
+            }
+            vpnInterface = null
         }
 
         try {
@@ -334,6 +375,12 @@ class DnsVpnService : VpnService() {
         } catch (e: Exception) {}
 
         log(LogType.SUCCESS, "ENGINE", "Engine stopped successfully.")
+    }
+
+    private fun stopVpn() = synchronized(vpnLock) {
+        if (!isRunning) return@synchronized
+        stopVpnInternal()
+        if (instance === this) instance = null
         stopSelf()
     }
 
@@ -363,6 +410,15 @@ class DnsVpnService : VpnService() {
             this, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+
+        val stopIntent = Intent(this, DnsVpnService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent: PendingIntent = PendingIntent.getService(
+            this, 1, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -374,6 +430,7 @@ class DnsVpnService : VpnService() {
             .setContentText("Profile: $profile ($details)")
             .setSmallIcon(android.R.drawable.ic_secure)
             .setContentIntent(pendingIntent)
+            .addAction(android.R.drawable.ic_delete, "Stop", stopPendingIntent)
             .build()
     }
 }
