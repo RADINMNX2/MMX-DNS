@@ -57,6 +57,14 @@ data class NetworkStatistics(
     val averageLatency: Double
 )
 
+data class SmartRoutingStatus(
+    val enabled: Boolean,
+    val active_edge: String,
+    val tunneled_connections: Long,
+    val direct_connections: Long,
+    val health_status: String
+)
+
 object NeonDnsNative {
 
     init {
@@ -75,6 +83,15 @@ object NeonDnsNative {
 
     fun stopEngine() {
         stopEngineNative()
+    }
+    
+    fun setSmartRouting(enable: Boolean, edgeIp: String) {
+        setSmartRoutingNative(enable, edgeIp)
+    }
+    
+    fun getSmartRoutingStatus(): SmartRoutingStatus {
+        val jsonStr = getSmartRoutingStatusNative()
+        return parseSmartRoutingStatus(jsonStr)
     }
 
     suspend fun benchmarkResolvers(resolvers: List<ResolverConfig>): BenchmarkReport {
@@ -111,6 +128,12 @@ object NeonDnsNative {
     private external fun stopEngineNative()
     
     @JvmStatic
+    private external fun setSmartRoutingNative(enable: Boolean, edgeIp: String)
+    
+    @JvmStatic
+    private external fun getSmartRoutingStatusNative(): String
+    
+    @JvmStatic
     private external fun benchmarkResolversNative(ips: Array<String>, transports: Array<String>): String
     
     @JvmStatic
@@ -132,5 +155,20 @@ object NeonDnsNative {
 
     private fun parseStatistics(json: String): NetworkStatistics {
         return NetworkStatistics(1024, 72.0, 8.7)
+    }
+    
+    private fun parseSmartRoutingStatus(json: String): SmartRoutingStatus {
+        return try {
+            val jsonObject = org.json.JSONObject(json)
+            SmartRoutingStatus(
+                enabled = jsonObject.optBoolean("enabled", false),
+                active_edge = jsonObject.optString("active_edge", ""),
+                tunneled_connections = jsonObject.optLong("tunneled_connections", 0),
+                direct_connections = jsonObject.optLong("direct_connections", 0),
+                health_status = jsonObject.optString("health_status", "UNKNOWN")
+            )
+        } catch (e: Exception) {
+            SmartRoutingStatus(false, "", 0, 0, "ERROR")
+        }
     }
 }

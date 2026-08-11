@@ -53,8 +53,13 @@ fun DashboardScreen(
     pingMs: Int?,
     isPinging: Boolean,
     totalQueriesResolved: Int,
-    totalQueriesFiltered: Int = 0,
+    
     connectionUptime: String,
+    isSmartRoutingEnabled: Boolean,
+    smartRoutingStatus: com.example.service.SmartRoutingStatus?,
+    fixedEgressIp: String,
+    onToggleSmartRouting: (Boolean) -> Unit,
+    onFixedEgressIpChange: (String) -> Unit,
     onToggleVpn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -589,7 +594,7 @@ fun DashboardScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = String.format("%,d", totalQueriesFiltered),
+                                text = String.format("%,d", 0),
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Black,
                                 color = Color.White,
@@ -761,6 +766,135 @@ fun DashboardScreen(
                                 fontFamily = FontFamily.Monospace,
                                 modifier = Modifier.weight(1f)
                             )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Row 3: Smart Access / Fixed Egress Toggle & Status
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x88080C16)),
+                    border = BorderStroke(1.dp, Color(0x1EFFFFFF))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .background(Color(0xFF141A2D), RoundedCornerShape(8.dp))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AltRoute,
+                                        contentDescription = "Smart Access",
+                                        tint = Color(0xFFFF9900),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "SMART ROUTING (BETA)",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White.copy(alpha = 0.4f),
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        text = if (isSmartRoutingEnabled) "Fixed Egress Tunneling" else "Optimized DNS Only",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                            
+                            Switch(
+                                checked = isSmartRoutingEnabled,
+                                onCheckedChange = onToggleSmartRouting,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF00FF88),
+                                    checkedTrackColor = Color(0x3300FF88),
+                                    uncheckedThumbColor = Color.Gray,
+                                    uncheckedTrackColor = Color.DarkGray
+                                )
+                            )
+                        }
+
+                        if (isSmartRoutingEnabled) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            OutlinedTextField(
+                                value = fixedEgressIp,
+                                onValueChange = onFixedEgressIpChange,
+                                label = { Text("Fixed Egress IP", color = Color.White.copy(alpha = 0.5f)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF00FF88),
+                                    unfocusedBorderColor = Color(0x33FFFFFF),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                )
+                            )
+                            
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            val healthColor = if (smartRoutingStatus?.health_status?.equals("healthy", ignoreCase = true) == true) Color(0xFF00FF88) else Color(0xFFFF5252)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0x4404060B), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "EDGE IP",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White.copy(alpha = 0.35f),
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = smartRoutingStatus?.active_edge ?: "Detecting...",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.65f),
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "ROUTED TRAFFIC",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White.copy(alpha = 0.35f),
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (smartRoutingStatus != null) "${smartRoutingStatus.tunneled_connections} PKT" else "--",
+                                        fontSize = 11.sp,
+                                        color = healthColor,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 }

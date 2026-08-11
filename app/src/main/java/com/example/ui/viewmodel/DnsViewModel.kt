@@ -70,7 +70,8 @@ class DnsViewModel(
     val activePrimaryDns: StateFlow<String> = DnsVpnService.activePrimaryDns
     val activeSecondaryDns: StateFlow<String> = DnsVpnService.activeSecondaryDns
     val totalQueriesResolved: StateFlow<Int> = DnsVpnService.totalQueriesResolved
-    val totalQueriesFiltered: StateFlow<Int> = DnsVpnService.totalQueriesFiltered
+    val smartRoutingStatus: StateFlow<com.example.service.SmartRoutingStatus?> = DnsVpnService.smartRoutingStatus
+//     val totalQueriesFiltered: StateFlow<Int> = DnsVpnService.totalQueriesFiltered
     val logs: StateFlow<List<com.example.service.DnsLogEntry>> = DnsVpnService.logs
 
     fun clearLogs() {
@@ -116,6 +117,12 @@ class DnsViewModel(
 
     private val _isMultiPathGlobalEnabled = MutableStateFlow(true)
     val isMultiPathGlobalEnabled: StateFlow<Boolean> = _isMultiPathGlobalEnabled.asStateFlow()
+    
+    private val _isSmartRoutingEnabled = MutableStateFlow(false)
+    val isSmartRoutingEnabled: StateFlow<Boolean> = _isSmartRoutingEnabled.asStateFlow()
+
+    private val _fixedEgressIp = MutableStateFlow("45.79.112.20")
+    val fixedEgressIp: StateFlow<String> = _fixedEgressIp.asStateFlow()
 
     fun setMultiPathGlobalEnabled(enabled: Boolean) {
         _isMultiPathGlobalEnabled.value = enabled
@@ -123,6 +130,50 @@ class DnsViewModel(
             .edit()
             .putBoolean("multipath_global_enabled", enabled)
             .apply()
+    }
+    
+    fun setFixedEgressIp(ip: String) {
+        _fixedEgressIp.value = ip
+        context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putString("fixed_egress_ip", ip)
+            .apply()
+            
+        // If VPN is connected and smart routing is enabled, restart VPN to apply new IP
+        if (vpnState.value == VpnState.CONNECTED && _isSmartRoutingEnabled.value) {
+            reloadVpnWithCurrentSettings()
+        }
+    }
+    
+    fun setSmartRoutingEnabled(enabled: Boolean) {
+        _isSmartRoutingEnabled.value = enabled
+        context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("smart_routing_enabled", enabled)
+            .apply()
+            
+        // If VPN is connected, dynamically reload
+        if (vpnState.value == VpnState.CONNECTED) {
+            reloadVpnWithCurrentSettings()
+        }
+    }
+    
+    private fun reloadVpnWithCurrentSettings() {
+        val currentSelected = _selectedProfile.value ?: return
+        val intent = Intent(context, DnsVpnService::class.java).apply {
+            action = DnsVpnService.ACTION_START
+            putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
+            putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
+            putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
+            putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
+            putExtra(DnsVpnService.EXTRA_SMART_ROUTING_ENABLED, _isSmartRoutingEnabled.value)
+            putExtra(DnsVpnService.EXTRA_FIXED_EGRESS_IP, _fixedEgressIp.value)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
     }
 
     fun setAppInForeground(foreground: Boolean) {
@@ -179,6 +230,8 @@ class DnsViewModel(
         val prefs = context.getSharedPreferences("dns_settings", Context.MODE_PRIVATE)
         _isGamingShieldEnabled.value = prefs.getBoolean("gaming_shield_enabled", true)
         _isMultiPathGlobalEnabled.value = prefs.getBoolean("multipath_global_enabled", true)
+        _isSmartRoutingEnabled.value = prefs.getBoolean("smart_routing_enabled", false)
+        _fixedEgressIp.value = prefs.getString("fixed_egress_ip", "45.79.112.20") ?: "45.79.112.20"
 
         // Automatically fetch default/first profile and start periodic ping tests
         viewModelScope.launch {
@@ -228,43 +281,14 @@ class DnsViewModel(
             
             // If VPN is connected, dynamically switch to the new profile instantly!
             if (vpnState.value == VpnState.CONNECTED) {
-                val intent = Intent(context, DnsVpnService::class.java).apply {
-                    action = DnsVpnService.ACTION_START
-                    putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, profile.primaryDns)
-                    putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, profile.secondaryDns)
-                    putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, profile.enableIpv6)
-                    putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, profile.primaryIpv6)
-                    putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, profile.secondaryIpv6)
-                    putExtra(DnsVpnService.EXTRA_PROFILE_NAME, profile.name)
-                    putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
-                }
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                reloadVpnWithCurrentSettings()
             }
         }
     }
 
     fun toggleVpn() {
-        val currentSelected = _selectedProfile.value ?: return
         if (vpnState.value == VpnState.DISCONNECTED) {
-            val intent = Intent(context, DnsVpnService::class.java).apply {
-                action = DnsVpnService.ACTION_START
-                putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, currentSelected.primaryDns)
-                putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, currentSelected.secondaryDns)
-                putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, currentSelected.enableIpv6)
-                putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, currentSelected.primaryIpv6)
-                putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, currentSelected.secondaryIpv6)
-                putExtra(DnsVpnService.EXTRA_PROFILE_NAME, currentSelected.name)
-                putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            reloadVpnWithCurrentSettings()
         } else {
             stopVpnInternal()
         }
@@ -306,21 +330,7 @@ class DnsViewModel(
                 // If VPN is active, switch or stop
                 if (vpnState.value == VpnState.CONNECTED) {
                     if (nextProfile != null) {
-                        val intent = Intent(context, DnsVpnService::class.java).apply {
-                            action = DnsVpnService.ACTION_START
-                            putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, nextProfile.primaryDns)
-                            putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, nextProfile.secondaryDns)
-                            putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, nextProfile.enableIpv6)
-                            putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, nextProfile.primaryIpv6)
-                            putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, nextProfile.secondaryIpv6)
-                            putExtra(DnsVpnService.EXTRA_PROFILE_NAME, nextProfile.name)
-                            putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
-                        }
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                            context.startForegroundService(intent)
-                        } else {
-                            context.startService(intent)
-                        }
+                        reloadVpnWithCurrentSettings()
                     } else {
                         forceStopVpn()
                     }
@@ -371,21 +381,7 @@ class DnsViewModel(
             if (id != 0 && _selectedProfile.value?.id == id) {
                 _selectedProfile.value = profile
                 if (vpnState.value == VpnState.CONNECTED) {
-                    val intent = Intent(context, DnsVpnService::class.java).apply {
-                        action = DnsVpnService.ACTION_START
-                        putExtra(DnsVpnService.EXTRA_PRIMARY_DNS, primary)
-                        putExtra(DnsVpnService.EXTRA_SECONDARY_DNS, secondary)
-                        putExtra(DnsVpnService.EXTRA_ENABLE_IPV6, enableIpv6)
-                        putExtra(DnsVpnService.EXTRA_PRIMARY_IPV6, primaryIpv6)
-                        putExtra(DnsVpnService.EXTRA_SECONDARY_IPV6, secondaryIpv6)
-                        putExtra(DnsVpnService.EXTRA_PROFILE_NAME, name)
-                        putExtra(DnsVpnService.EXTRA_PROTOCOL, "UDP")
-                    }
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        context.startForegroundService(intent)
-                    } else {
-                        context.startService(intent)
-                    }
+                    reloadVpnWithCurrentSettings()
                 }
             }
             

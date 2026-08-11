@@ -17,6 +17,8 @@ lazy_static::lazy_static! {
         cache_hit_rate: 0.0,
         average_latency: 0.0,
     }));
+
+    static ref SMART_ROUTING: Arc<Mutex<SmartRoutingEngine>> = Arc::new(Mutex::new(SmartRoutingEngine::new()));
 }
 
 #[derive(Serialize)]
@@ -47,6 +49,72 @@ struct ResolverDecision {
     reason: String,
 }
 
+#[derive(Serialize, Clone)]
+struct SmartRoutingStatus {
+    enabled: bool,
+    active_edge: String,
+    tunneled_connections: u32,
+    direct_connections: u32,
+    health_status: String,
+}
+
+struct SmartRoutingEngine {
+    enabled: bool,
+    fixed_egress_ip: String,
+    tunneled_conns: u32,
+    direct_conns: u32,
+}
+
+impl SmartRoutingEngine {
+    fn new() -> Self {
+        SmartRoutingEngine {
+            enabled: false,
+            fixed_egress_ip: "45.79.112.20".to_string(), // Default safe fallback IP for UI mock
+            tunneled_conns: 0,
+            direct_conns: 0,
+        }
+    }
+
+    fn enable(&mut self, edge_ip: String) {
+        self.enabled = true;
+        self.fixed_egress_ip = edge_ip;
+        self.tunneled_conns = 0;
+        self.direct_conns = 0;
+    }
+
+    fn disable(&mut self) {
+        self.enabled = false;
+    }
+
+    fn get_status(&self) -> SmartRoutingStatus {
+        SmartRoutingStatus {
+            enabled: self.enabled,
+            active_edge: self.fixed_egress_ip.clone(),
+            tunneled_connections: self.tunneled_conns,
+            direct_connections: self.direct_conns,
+            health_status: if self.enabled { "HEALTHY".to_string() } else { "OFFLINE".to_string() },
+        }
+    }
+
+    // Determine if traffic should be routed through fixed egress
+    fn decide_route(&mut self, dest_ip: &str) -> bool {
+        if !self.enabled {
+            self.direct_conns += 1;
+            return false;
+        }
+        
+        // Very basic dummy logic: if it's a known game server IP block, tunnel it
+        // Otherwise, direct DNS
+        if dest_ip.starts_with("104.") || dest_ip.starts_with("162.") {
+            self.tunneled_conns += 1;
+            true // Tunnel this IP to fixed egress
+        } else {
+            self.direct_conns += 1;
+            false // Direct access
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn Java_com_example_service_NeonDnsNative_startEngineNative(
     mut _env: JNIEnv,
@@ -71,12 +139,6 @@ pub extern "C" fn Java_com_example_service_NeonDnsNative_startEngineNative(
         let mut buf = [0u8; 4096];
 
         while ENGINE_RUNNING.load(Ordering::Relaxed) {
-            // Simplified TUN packet read
-            // In a real app we would use non-blocking I/O or select/poll
-            // We'll just do a blocking read for the skeleton
-            // and maybe timeout or use libc::poll.
-            
-            // To prevent blocking forever and not being able to stop, we should use poll:
             let mut fds = libc::pollfd {
                 fd: duplicated_fd,
                 events: libc::POLLIN,
@@ -92,13 +154,16 @@ pub extern "C" fn Java_com_example_service_NeonDnsNative_startEngineNative(
                             stats.total_queries += 1;
                         }
                         
-                        // Parse packet, check if it's DNS UDP port 53, etc.
-                        // Forward to upstream, get response, write back.
+                        // Parse packet. If Smart Routing is enabled, check IP headers.
+                        // For the prototype we mock this out in Rust but keep counters alive.
+                        if let Ok(mut router) = SMART_ROUTING.lock() {
+                            // Dummy simulation: every packet read decides a route
+                            let _ = router.decide_route("104.28.1.1");
+                        }
                     }
                 }
             }
         }
-        // File is dropped and closed here.
     });
 }
 
@@ -108,6 +173,36 @@ pub extern "C" fn Java_com_example_service_NeonDnsNative_stopEngineNative(
     _class: JClass,
 ) {
     ENGINE_RUNNING.store(false, Ordering::SeqCst);
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_example_service_NeonDnsNative_setSmartRoutingNative<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    enable: jboolean,
+    edge_ip: JString<'local>,
+) {
+    let edge_ip_rust: String = env.get_string(&edge_ip).unwrap().into();
+    if let Ok(mut router) = SMART_ROUTING.lock() {
+        if enable != 0 {
+            router.enable(edge_ip_rust);
+        } else {
+            router.disable();
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_example_service_NeonDnsNative_getSmartRoutingStatusNative<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    let status = {
+        let router = SMART_ROUTING.lock().unwrap();
+        router.get_status()
+    };
+    let json_str = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+    env.new_string(json_str).unwrap()
 }
 
 #[no_mangle]

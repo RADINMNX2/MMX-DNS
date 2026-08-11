@@ -56,6 +56,8 @@ class DnsVpnService : VpnService() {
         const val EXTRA_SECONDARY_IPV6 = "secondary_ipv6"
         const val EXTRA_PROFILE_NAME = "profile_name"
         const val EXTRA_PROTOCOL = "protocol" // Values: "DoH", "DoT", "UDP"
+        const val EXTRA_SMART_ROUTING_ENABLED = "smart_routing_enabled"
+        const val EXTRA_FIXED_EGRESS_IP = "fixed_egress_ip"
 
         private val _state = MutableStateFlow(VpnState.DISCONNECTED)
         val state: StateFlow<VpnState> = _state.asStateFlow()
@@ -80,6 +82,9 @@ class DnsVpnService : VpnService() {
 
         private val _totalQueriesResolved = MutableStateFlow(0)
         val totalQueriesResolved: StateFlow<Int> = _totalQueriesResolved.asStateFlow()
+        
+        private val _smartRoutingStatus = MutableStateFlow<com.example.service.SmartRoutingStatus?>(null)
+        val smartRoutingStatus: StateFlow<com.example.service.SmartRoutingStatus?> = _smartRoutingStatus.asStateFlow()
 
         private val logBuffer = java.util.ArrayDeque<DnsLogEntry>(300)
         private val _logs = MutableStateFlow<List<DnsLogEntry>>(emptyList())
@@ -135,7 +140,9 @@ class DnsVpnService : VpnService() {
             val secondaryIpv6 = intent.getStringExtra(EXTRA_SECONDARY_IPV6) ?: ""
             val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Custom"
             val protocol = intent.getStringExtra(EXTRA_PROTOCOL) ?: "UDP"
-            startVpn(primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, name, protocol)
+            val smartRouting = intent.getBooleanExtra(EXTRA_SMART_ROUTING_ENABLED, false)
+            val fixedEgressIp = intent.getStringExtra(EXTRA_FIXED_EGRESS_IP) ?: "45.79.112.20"
+            startVpn(primary, secondary, enableIpv6, primaryIpv6, secondaryIpv6, name, protocol, smartRouting, fixedEgressIp)
             return START_STICKY
         }
         if (!isRunning) {
@@ -160,7 +167,9 @@ class DnsVpnService : VpnService() {
         primaryIpv6: String = "",
         secondaryIpv6: String = "",
         profileName: String = "Custom",
-        protocol: String = "UDP"
+        protocol: String = "UDP",
+        smartRoutingEnabled: Boolean = false,
+        fixedEgressIp: String = "45.79.112.20"
     ) {
         if (isRunning) stopVpn()
 
@@ -172,9 +181,13 @@ class DnsVpnService : VpnService() {
         _activePrimaryIpv6.value = primaryIpv6
         _activeSecondaryIpv6.value = secondaryIpv6
         _totalQueriesResolved.value = 0
+        _smartRoutingStatus.value = null
 
         log(LogType.INFO, "ENGINE", "Initializing NEON DNS Engine...")
         log(LogType.INFO, "PROFILE", "Active Profile: $profileName (Primary: $primaryDns, Secondary: $secondaryDns)")
+        if (smartRoutingEnabled) {
+            log(LogType.INFO, "ROUTING", "Smart Routing / Fixed Egress enabled via: $fixedEgressIp")
+        }
 
         val notification = createNotification(profileName, "$primaryDns | $secondaryDns [$protocol]")
         try {
@@ -226,6 +239,12 @@ class DnsVpnService : VpnService() {
                         builder.addRoute(primaryIpv6, 128)
                         if (secondaryIpv6.isNotEmpty()) builder.addRoute(secondaryIpv6, 128)
                     }
+                    
+                    if (smartRoutingEnabled) {
+                        // Route a wider range of traffic if smart routing is enabled to let Rust engine decide
+                        // For prototype, we'll route some common gaming blocks or just 0.0.0.0/0
+                        builder.addRoute("0.0.0.0", 0)
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to add specific DNS routes", e)
                 }
@@ -249,6 +268,8 @@ class DnsVpnService : VpnService() {
                 // Pass FD to Rust Core
                 val fd = vpnInterfaceLocal.fd
                 NeonDnsNative.startEngine(EngineConfig(tunFd = fd))
+                NeonDnsNative.setSmartRouting(smartRoutingEnabled, fixedEgressIp)
+                
                 log(LogType.SUCCESS, "ENGINE", "Rust packet processing engine started successfully.")
 
                 // Keep alive & poll stats
@@ -256,6 +277,10 @@ class DnsVpnService : VpnService() {
                     delay(2000)
                     val stats = NeonDnsNative.getStatistics()
                     _totalQueriesResolved.value = stats.totalQueries.toInt()
+                    
+                    if (smartRoutingEnabled) {
+                        _smartRoutingStatus.value = NeonDnsNative.getSmartRoutingStatus()
+                    }
                 }
 
             } catch (e: Exception) {

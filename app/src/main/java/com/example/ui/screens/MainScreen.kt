@@ -80,6 +80,9 @@ fun MainScreen(
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isGamingShieldEnabled by viewModel.isGamingShieldEnabled.collectAsStateWithLifecycle()
     val isMultiPathGlobalEnabled by viewModel.isMultiPathGlobalEnabled.collectAsStateWithLifecycle()
+    val isSmartRoutingEnabled by viewModel.isSmartRoutingEnabled.collectAsStateWithLifecycle()
+    val smartRoutingStatus by viewModel.smartRoutingStatus.collectAsStateWithLifecycle()
+    val fixedEgressIp by viewModel.fixedEgressIp.collectAsStateWithLifecycle()
 
     // VPN Permission Launcher
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -288,6 +291,11 @@ fun MainScreen(
                         isPinging = isPinging,
                         totalQueriesResolved = totalQueriesResolved,
                         connectionUptime = connectionUptime,
+                        isSmartRoutingEnabled = isSmartRoutingEnabled,
+                        smartRoutingStatus = smartRoutingStatus,
+                        fixedEgressIp = fixedEgressIp,
+                        onToggleSmartRouting = { viewModel.setSmartRoutingEnabled(it) },
+                        onFixedEgressIpChange = { viewModel.setFixedEgressIp(it) },
                         onToggleVpn = {
                             val vpnPrepareIntent = VpnService.prepare(context)
                             if (vpnPrepareIntent != null) {
