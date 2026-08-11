@@ -1,0 +1,15 @@
+[package]
+name = "neon_dns_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "neon_dns_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21.1"
+libc = "0.2"
+lazy_static = "1.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
