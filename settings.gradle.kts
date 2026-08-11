@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "MNX TOOLS"
+rootProject.name = "NEON DNS"
 
 include(":app")

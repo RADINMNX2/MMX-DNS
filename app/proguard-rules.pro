@@ -30,9 +30,7 @@
 }
 
 # Explicitly preserve the entire native bridge class in your package structure
--keep class com.example.service.NativeEngine { *; }
--keep class com.example.service.FluxDnsEngine { *; }
--keep class com.example.fluxdns.NativeEngine { *; }
+-keep class com.example.service.NeonDnsNative { *; }
 
 # Keep JVM static callbacks called from Rust/native side
 -keepclassmembers class * {

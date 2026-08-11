@@ -209,9 +209,9 @@ abstract class CompileRustTask : DefaultTask() {
             val cargoTargetDir = cargoDirFile.resolve("target")
             
             targets.forEach { (cargoTarget, androidAbi) ->
-                val sourceFile = cargoTargetDir.resolve("$cargoTarget/release/libfluxdns.so")
+                val sourceFile = cargoTargetDir.resolve("$cargoTarget/release/libneon_dns_core.so")
                 val destDir = jniLibsDirFile.resolve(androidAbi)
-                val destFile = destDir.resolve("libfluxdns.so")
+                val destFile = destDir.resolve("libneon_dns_core.so")
                 
                 if (sourceFile.exists()) {
                     destDir.mkdirs()
@@ -231,8 +231,8 @@ abstract class CompileRustTask : DefaultTask() {
 // Register the custom task and configure its inputs and outputs using directory properties
 val compileRust = tasks.register<CompileRustTask>("compileRust") {
     group = "build"
-    description = "Compiles the Rust fluxdns-engine using cargo-ndk"
-    cargoDir.set(layout.projectDirectory.dir("../fluxdns-engine"))
+    description = "Compiles the Rust neon_dns_core using cargo-ndk"
+    cargoDir.set(layout.projectDirectory.dir("../neon_dns_core"))
     jniLibsDir.set(layout.projectDirectory.dir("src/main/jniLibs"))
 }
 

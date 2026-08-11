@@ -77,7 +77,6 @@ fun MainScreen(
     val profiles by viewModel.allProfiles.collectAsStateWithLifecycle()
     val gamingApps by viewModel.allGamingApps.collectAsStateWithLifecycle()
     val totalQueriesResolved by viewModel.totalQueriesResolved.collectAsStateWithLifecycle()
-    val totalQueriesFiltered by viewModel.totalQueriesFiltered.collectAsStateWithLifecycle()
     val connectionUptime by viewModel.connectionUptime.collectAsStateWithLifecycle()
     val isGamingShieldEnabled by viewModel.isGamingShieldEnabled.collectAsStateWithLifecycle()
     val isMultiPathGlobalEnabled by viewModel.isMultiPathGlobalEnabled.collectAsStateWithLifecycle()
@@ -288,7 +287,6 @@ fun MainScreen(
                         pingMs = pingMs,
                         isPinging = isPinging,
                         totalQueriesResolved = totalQueriesResolved,
-                        totalQueriesFiltered = totalQueriesFiltered,
                         connectionUptime = connectionUptime,
                         onToggleVpn = {
                             val vpnPrepareIntent = VpnService.prepare(context)

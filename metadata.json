@@ -1,6 +1,6 @@
 {
-  "name": "MNX TOOLS",
-  "description": "All-in-One Multi-Tool Suite for Android with DNS Changer, Network Diagnostics, System Monitor, and App Analyzer.",
+  "name": "NEON DNS",
+  "description": "A highly optimized, privacy-focused, intelligent DNS and network optimization platform for Android.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
