@@ -1,154 +1,231 @@
-name: 🚀 Modern Android Build & Release
+name: Android Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
-# جلوگیری از اجرای همزمان و لغو بیلدهای قدیمی روی یک Branch (صرفه‌جویی در منابع)
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  # ---------------------------------------------------------
-  # 🛠 PROJECT CONFIGURATION (تغییرات فقط در این بخش انجام شود)
-  # ---------------------------------------------------------
-  APP_NAME: "MyAwesomeApp"
-  RUST_PROJECT_DIR: "fluxdns-engine" # اگر پروژه Rust ندارید این قسمت‌ها را کامنت کنید
-  RUST_TARGETS: "aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android"
-  NDK_VERSION: "r26d"
-  JAVA_VERSION: "17"
-  GRADLE_VERSION: "8.6" # نسخه پیشنهادی گریدل
-  # ---------------------------------------------------------
-
 jobs:
-  build-and-release:
-    name: 🛠 Build & Package
+  build-android:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # برای ساخت Release گیت‌هاب
+      contents: write
+
+    env:
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+      KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # برای دریافت تاریخچه کامل (مفید برای ورژن‌دهی)
 
-      - name: ☕ Set up Java JDK ${{ env.JAVA_VERSION }}
+      - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: '17'
 
-      - name: 📦 Set up Android NDK
+      - name: Set up Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: ${{ env.NDK_VERSION }}
+          ndk-version: r26d
           add-to-path: true
           link-to-sdk: true
 
-      - name: ⚙️ Configure NDK Environment
+      - name: Configure NDK Environment and local.properties
         run: |
           echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
           echo "ndk.dir=${{ steps.setup-ndk.outputs.ndk-path }}" > local.properties
+          echo "NDK configured at: ${{ steps.setup-ndk.outputs.ndk-path }}"
+          cat local.properties
 
-      # ---------------- RUST SECTION ----------------
-      - name: 🦀 Set up Rust Toolchain
+      - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ env.RUST_TARGETS }}
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
 
-      - name: ⚡ Smart Rust Cache
-        uses: Swatinem/rust-cache@v2
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
         with:
-          workspaces: ${{ env.RUST_PROJECT_DIR }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            fluxdns-engine/target/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: 🚀 Install cargo-binstall & cargo-ndk (Ultra Fast)
+      - name: Install cargo-ndk
         run: |
-          # نصب binstall برای دانلود باینری از پیش کامپایل شده (نصب در ۲ ثانیه به جای ۵ دقیقه)
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall cargo-ndk -y
-
-      - name: 🏗 Build Rust Native Engine
-        working-directory: ${{ env.RUST_PROJECT_DIR }}
-        run: |
-          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -o ../app/src/main/jniLibs build --release
-      # ----------------------------------------------
-
-      - name: 🐘 Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
-
-      - name: 🔧 Ensure Env Files
-        run: |
-          [ -f .env ] || { [ -f .env.example ] && cp .env.example .env || touch .env; }
-          # ساخت گریدل رپر در صورت عدم وجود (توصیه میشود gradlew در مخزن کامیت شود)
-          [ ! -f gradlew ] && gradle wrapper --gradle-version ${{ env.GRADLE_VERSION }} || true
-          chmod +x gradlew
-
-      - name: 🔨 Build Android APKs
-        run: ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
-
-      - name: 🔐 Sign Release APK (Professional Way)
-        id: sign_app
-        uses: r0adkll/sign-android-release@v1
-        # این مرحله فقط در صورت وجود سیکرت‌ها اجرا می‌شود
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-
-      - name: 🏷️ Extract App Version
-        id: version
-        run: |
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"?\K[^"\n]+' app/build.gradle.kts || echo "1.0")
-          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts || echo "1")
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-          echo "TAG_NAME=v$VERSION_NAME-$VERSION_CODE" >> $GITHUB_ENV
-
-      - name: 📂 Organize Artifacts
-        run: |
-          mkdir -p final-apks
-          # انتقال APKهای ساخته شده با نام‌های استاندارد و جنریک
-          find app/build/outputs/apk -name "*-debug.apk" -exec cp {} "final-apks/${{ env.APP_NAME }}-${{ env.TAG_NAME }}-debug.apk" \;
-          
-          # پیدا کردن فایل ریلیز (امضا شده یا امضا نشده)
-          if ls app/build/outputs/apk/release/*-signed.apk 1> /dev/null 2>&1; then
-            cp app/build/outputs/apk/release/*-signed.apk "final-apks/${{ env.APP_NAME }}-${{ env.TAG_NAME }}-release.apk"
+          if ! command -v cargo-ndk &> /dev/null; then
+            echo "Installing cargo-ndk..."
+            cargo install cargo-ndk
           else
-            find app/build/outputs/apk/release -name "*-unsigned.apk" -exec cp {} "final-apks/${{ env.APP_NAME }}-${{ env.TAG_NAME }}-release-unsigned.apk" \;
+            echo "cargo-ndk is already installed (restored from cache)"
           fi
 
-      - name: ☁️ Upload Artifacts to GitHub Actions
+      - name: Build FluxDNS Native Engine (Rust CDYLIB)
+        run: |
+          cd fluxdns-engine
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -o ../app/src/main/jniLibs build --release
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Generate Gradle Wrapper
+        run: |
+          if [ ! -f gradlew ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper --gradle-version 9.3.1
+          fi
+          chmod +x gradlew
+
+      - name: Create fallback .env file
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env || touch .env
+          fi
+
+      - name: Restore Debug Keystore
+        run: |
+          if [ -f debug.keystore.base64 ]; then
+            echo "Restoring debug.keystore from base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            echo "debug.keystore.base64 not found, generating fallback debug keystore..."
+            keytool -genkeypair \
+              -v \
+              -keystore debug.keystore \
+              -alias "androiddebugkey" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "android" \
+              -keypass "android" \
+              -dname "CN=Android Debug, O=Android, C=US"
+          fi
+
+      - name: Generate Fallback Keystore
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore "$KEYSTORE_PATH" \
+            -alias "upload" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -dname "CN=MNX DNS, OU=Development, O=MNX, L=Global, S=Global, C=US"
+
+      - name: Build Android APKs (Debug & Release)
+        run: ./gradlew assembleDebug assembleRelease --no-daemon
+
+      - name: Locate and Package Artifacts
+        run: |
+          mkdir -p build-artifacts
+          # Locate APK files and copy to artifacts directory
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} build-artifacts/ \;
+
+      - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-APKs
-          path: final-apks/*.apk
-          retention-days: 7
+          name: mnx-dns-apks
+          path: build-artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: 🚀 Publish GitHub Release
+      - name: Extract App Version
+        id: get_version
+        run: |
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "1.0")
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts || echo "1")
+          TAG_NAME="v${VERSION_NAME}"
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Resolved Release Tag: $TAG_NAME (Version Code: $VERSION_CODE)"
+
+      - name: Prepare Release Binaries
         if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: "⚡ ${{ env.APP_NAME }} ${{ env.VERSION_NAME }} (Build ${{ env.VERSION_CODE }})"
-          files: final-apks/*.apk
-          body: |
-            # ⚡ ${{ env.APP_NAME }} — Release `${{ env.VERSION_NAME }}`
-            
-            Welcome to the automated build for **${{ env.APP_NAME }}**.
-            
-            ### 📦 Downloadable Assets
-            - `${{ env.APP_NAME }}-*-release.apk`: Production build (Optimized & Signed if keys provided).
-            - `${{ env.APP_NAME }}-*-debug.apk`: Debug build for development and inspection.
-            
-            > _Auto-generated by GitHub Actions CI/CD Pipeline 🚀_
+        run: |
+          mkdir -p release-binaries
+          TAG="${{ steps.get_version.outputs.tag_name }}"
+          
+          # Copy release APK if available
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk "release-binaries/MNX-FluxDNS-${TAG}-release.apk"
+          elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "release-binaries/MNX-FluxDNS-${TAG}-release.apk"
+          fi
+
+          # Copy debug APK if available
+          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk "release-binaries/MNX-FluxDNS-${TAG}-debug.apk"
+          fi
+
+          # Fallback copy if paths differ
+          if [ -z "$(ls -A release-binaries)" ]; then
+            find app/build/outputs/apk/ -name "*.apk" -exec cp {} release-binaries/ \;
+          fi
+
+          echo "Binaries prepared for release:"
+          ls -la release-binaries/
+
+      - name: Publish or Update GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.get_version.outputs.tag_name }}
+          VERSION_NAME: ${{ steps.get_version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.get_version.outputs.version_code }}
+        run: |
+          echo "Checking if GitHub Release $TAG_NAME already exists..."
+          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            echo "⚡ Release $TAG_NAME already exists! Deleting previous release & tag to replace with updated build..."
+            gh release delete "$TAG_NAME" --cleanup-tag -y || true
+            git push --delete origin "$TAG_NAME" 2>/dev/null || true
+          else
+            echo "✨ Creating new release for version $TAG_NAME..."
+          fi
+
+          RELEASE_BODY=$(cat << 'EOF'
+          # ⚡ MNX FluxDNS Engine — Release
+
+          Welcome to the official build release of **MNX FluxDNS**! Built with an ultra-fast Rust native engine, dual-stack DNS racing, and military-grade network anti-censorship.
+
+          ### 🌟 Key Highlights & Engineering Features
+          - 🚀 **Rust Native Engine (`libfluxdns.so`)**: Zero-allocation UDP socket racing with memory pooling and CoDel congestion control.
+          - ⚡ **Dual-Stack IPv4 / IPv6 DNS**: Full support for both IPv4 and compressed/uncompressed IPv6 addresses with dynamic validation.
+          - 🌐 **Multi-Protocol Acceleration**: Integrated DoH (DNS-over-HTTPS), DoT, and DoQ (DNS-over-QUIC) via Cronet & Rust sockets.
+          - 🎮 **Gaming & Anti-Censorship Shield**: Dedicated lower latency routing and custom DNS profiles (Server 1 through 6).
+          - 📊 **Real-time Telemetry & Diagnostics**: Live cell network monitoring, latency tracking, and packet inspection.
+
+          ---
+          ### 📦 Downloadable Assets
+          - **`MNX-FluxDNS-v*.apk`**: Production release build.
+          - **`MNX-FluxDNS-v*-debug.apk`**: Debug build for developer testing and log inspection.
+
+          ---
+          *Automated Release created by GitHub Actions CI/CD Pipeline.*
+          EOF
+          )
+
+          gh release create "$TAG_NAME" release-binaries/*.apk \
+            --title "⚡ MNX FluxDNS $TAG_NAME (Build $VERSION_CODE)" \
+            --notes "$RELEASE_BODY" \
+            --latest
+

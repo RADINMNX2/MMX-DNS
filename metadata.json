@@ -1,6 +1,6 @@
 {
-  "name": "MNX DNS",
-  "description": "Multi-protocol, dual-stack high-fidelity custom DNS routing engine and gaming split-tunnel shield.",
+  "name": "MNX TOOLS",
+  "description": "All-in-One Multi-Tool Suite for Android with DNS Changer, Network Diagnostics, System Monitor, and App Analyzer.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

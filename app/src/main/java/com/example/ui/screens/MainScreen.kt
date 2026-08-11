@@ -11,20 +11,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Gamepad
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Gamepad
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,6 +31,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.Lifecycle
+import com.example.ui.theme.DarkBg
+import com.example.ui.theme.DarkBorder
+import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.RedPrimary
+import com.example.ui.theme.CyanPrimary
+import com.example.ui.theme.AccentPurple
 import com.example.ui.viewmodel.DnsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,7 +46,7 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var currentTab by remember { mutableStateOf(0) } // 0 = Dashboard, 1 = Gaming Shield, 2 = Profiles, 3 = Logs
+    var currentTab by remember { mutableStateOf(0) } // 0 = Dashboard, 1 = Gaming Shield, 2 = Profiles, 3 = Logs, 4 = Settings
 
     // Collect all states from ViewModel
     val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
@@ -102,17 +99,15 @@ fun MainScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            // Permission granted, toggle VPN
             viewModel.toggleVpn()
         }
     }
 
     if (!isAppInForeground) {
-        // Complete background stasis: stop rendering UI tree, halt animations, clear state recomposition
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(Color(0xFF070913))
+                .background(DarkBg)
         )
         return
     }
@@ -120,15 +115,14 @@ fun MainScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         bottomBar = {
-            // High-fidelity Glassmorphic Navigation Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xE60E121E))
-                    .border(BorderStroke(0.5.dp, Color(0x33FFFFFF)), RoundedCornerShape(24.dp))
+                    .background(DarkSurface.copy(alpha = 0.95f))
+                    .border(BorderStroke(1.dp, DarkBorder), RoundedCornerShape(24.dp))
                     .testTag("bottom_nav_bar")
             ) {
                 Row(
@@ -138,59 +132,59 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Dashboard Tab button
-                    val isDashboardActive = currentTab == 0
+                    // Dashboard Tab
+                    val isDashActive = currentTab == 0
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 0 }
-                            .padding(vertical = 10.dp)
+                            .padding(vertical = 8.dp)
                             .testTag("tab_dashboard")
                     ) {
                         Icon(
-                            imageVector = if (isDashboardActive) Icons.Filled.Home else Icons.Outlined.Home,
-                            contentDescription = "Home Dashboard",
-                            tint = if (isDashboardActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(22.dp)
+                            imageVector = if (isDashActive) Icons.Filled.Dns else Icons.Outlined.Dns,
+                            contentDescription = "Dashboard",
+                            tint = if (isDashActive) RedPrimary else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            text = "Core",
+                            text = "Engine",
                             fontSize = 11.sp,
-                            fontWeight = if (isDashboardActive) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isDashboardActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
+                            fontWeight = if (isDashActive) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isDashActive) RedPrimary else Color.White.copy(alpha = 0.5f)
                         )
                     }
 
-                    // Gaming Shield Tab button
-                    val isGamingShieldActive = currentTab == 1
+                    // Gaming Shield Tab
+                    val isShieldActive = currentTab == 1
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 1 }
-                            .padding(vertical = 10.dp)
-                            .testTag("tab_gaming_shield")
+                            .padding(vertical = 8.dp)
+                            .testTag("tab_shield")
                     ) {
                         Icon(
-                            imageVector = if (isGamingShieldActive) Icons.Filled.Gamepad else Icons.Outlined.Gamepad,
+                            imageVector = if (isShieldActive) Icons.Filled.Gamepad else Icons.Outlined.Gamepad,
                             contentDescription = "Gaming Shield",
-                            tint = if (isGamingShieldActive) Color(0xFF00FF88) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(22.dp)
+                            tint = if (isShieldActive) AccentPurple else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = "Shield",
                             fontSize = 11.sp,
-                            fontWeight = if (isGamingShieldActive) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isGamingShieldActive) Color(0xFF00FF88) else Color.White.copy(alpha = 0.5f)
+                            fontWeight = if (isShieldActive) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isShieldActive) AccentPurple else Color.White.copy(alpha = 0.5f)
                         )
                     }
 
-                    // Profiles Tab button
+                    // Profiles Tab
                     val isProfilesActive = currentTab == 2
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -198,25 +192,25 @@ fun MainScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 2 }
-                            .padding(vertical = 10.dp)
+                            .padding(vertical = 8.dp)
                             .testTag("tab_profiles")
                     ) {
                         Icon(
-                            imageVector = if (isProfilesActive) Icons.Filled.Dns else Icons.Outlined.Dns,
-                            contentDescription = "DNS Profiles",
-                            tint = if (isProfilesActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(22.dp)
+                            imageVector = if (isProfilesActive) Icons.Filled.ListAlt else Icons.Outlined.ListAlt,
+                            contentDescription = "Profiles",
+                            tint = if (isProfilesActive) RedPrimary else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = "Profiles",
                             fontSize = 11.sp,
                             fontWeight = if (isProfilesActive) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isProfilesActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
+                            color = if (isProfilesActive) RedPrimary else Color.White.copy(alpha = 0.5f)
                         )
                     }
 
-                    // Logs Tab button
+                    // Logs Tab
                     val isLogsActive = currentTab == 3
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -224,25 +218,25 @@ fun MainScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 3 }
-                            .padding(vertical = 10.dp)
+                            .padding(vertical = 8.dp)
                             .testTag("tab_logs")
                     ) {
                         Icon(
-                            imageVector = if (isLogsActive) Icons.Filled.History else Icons.Outlined.History,
-                            contentDescription = "Engine Logs",
-                            tint = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(22.dp)
+                            imageVector = if (isLogsActive) Icons.Filled.Article else Icons.Outlined.Article,
+                            contentDescription = "Logs",
+                            tint = if (isLogsActive) RedPrimary else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = "Logs",
                             fontSize = 11.sp,
                             fontWeight = if (isLogsActive) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isLogsActive) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.5f)
+                            color = if (isLogsActive) RedPrimary else Color.White.copy(alpha = 0.5f)
                         )
                     }
 
-                    // Settings & About Tab button
+                    // Settings Tab
                     val isSettingsActive = currentTab == 4
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -250,45 +244,37 @@ fun MainScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { currentTab = 4 }
-                            .padding(vertical = 10.dp)
+                            .padding(vertical = 8.dp)
                             .testTag("tab_settings")
                     ) {
                         Icon(
                             imageVector = if (isSettingsActive) Icons.Filled.Settings else Icons.Outlined.Settings,
-                            contentDescription = "Settings and About",
-                            tint = if (isSettingsActive) Color(0xFFFF00A0) else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(22.dp)
+                            contentDescription = "Settings",
+                            tint = if (isSettingsActive) RedPrimary else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = "Settings",
                             fontSize = 11.sp,
                             fontWeight = if (isSettingsActive) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSettingsActive) Color(0xFFFF00A0) else Color.White.copy(alpha = 0.5f)
+                            color = if (isSettingsActive) RedPrimary else Color.White.copy(alpha = 0.5f)
                         )
                     }
                 }
             }
         },
-        containerColor = Color.Transparent // Allow background gradients to show
+        containerColor = DarkBg
     ) { innerPadding ->
-        // Render current screen with high-end sliding/fading transition
         AnimatedContent(
             targetState = currentTab,
             transitionSpec = {
-                if (targetState > initialState) {
-                    // Slide left on forward nav
-                    (slideInHorizontally(animationSpec = tween(400)) { width -> width / 3 } + fadeIn(animationSpec = tween(400))) togetherWith
-                            (slideOutHorizontally(animationSpec = tween(350)) { width -> -width / 3 } + fadeOut(animationSpec = tween(350)))
-                } else {
-                    // Slide right on backward nav
-                    (slideInHorizontally(animationSpec = tween(400)) { width -> -width / 3 } + fadeIn(animationSpec = tween(400))) togetherWith
-                            (slideOutHorizontally(animationSpec = tween(350)) { width -> width / 3 } + fadeOut(animationSpec = tween(350)))
-                }
+                (fadeIn(animationSpec = tween(250)) + slideInHorizontally(animationSpec = tween(250)) { width -> width / 4 }) togetherWith
+                        (fadeOut(animationSpec = tween(200)) + slideOutHorizontally(animationSpec = tween(200)) { width -> -width / 4 })
             },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding()), // Custom bottom padding handling to avoid bottom bar overlap
+                .padding(bottom = innerPadding.calculateBottomPadding()),
             label = "tab_transitions"
         ) { tab ->
             when (tab) {
@@ -376,13 +362,13 @@ fun MainScreen(
                     Icon(
                         imageVector = Icons.Default.Warning,
                         contentDescription = "Warning Icon",
-                        tint = Color(0xFFFF0055),
+                        tint = RedPrimary,
                         modifier = Modifier.size(28.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "CRASH RECOVERY ACTIVE",
-                        color = Color(0xFFFF0055),
+                        color = RedPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -392,7 +378,7 @@ fun MainScreen(
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "FluxDNS has intercepted an unexpected crash and safely recovered the process. The stack trace is recorded below:",
+                        text = "MNX TOOLS intercepted an unexpected crash and safely recovered the process. The stack trace is recorded below:",
                         color = Color.White.copy(alpha = 0.8f),
                         fontSize = 13.sp,
                         modifier = Modifier.padding(bottom = 12.dp)
@@ -403,15 +389,15 @@ fun MainScreen(
                             .fillMaxWidth()
                             .height(220.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF07090F))
-                            .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+                            .background(DarkBg)
+                            .border(0.5.dp, DarkBorder, RoundedCornerShape(12.dp))
                             .padding(12.dp)
                     ) {
                         androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
                             item {
                                 Text(
                                     text = pendingCrashLog ?: "",
-                                    color = Color(0xFFFF4D79),
+                                    color = RedPrimary,
                                     fontSize = 11.sp,
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     lineHeight = 15.sp
@@ -425,22 +411,22 @@ fun MainScreen(
                 Button(
                     onClick = {
                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        val clip = android.content.ClipData.newPlainText("FluxDNS Crash Report", pendingCrashLog)
+                        val clip = android.content.ClipData.newPlainText("MNX TOOLS Crash Report", pendingCrashLog)
                         clipboard.setPrimaryClip(clip)
                         android.widget.Toast.makeText(context, "Crash report copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F0FF)),
+                    colors = ButtonDefaults.buttonColors(containerColor = RedPrimary),
                     modifier = Modifier.testTag("copy_crash_report_button")
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
                             contentDescription = "Copy Report Icon",
-                            tint = Color(0xFF04060A),
+                            tint = Color.White,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Copy Report", color = Color(0xFF04060A), fontWeight = FontWeight.Bold)
+                        Text("Copy Report", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -453,9 +439,10 @@ fun MainScreen(
                     Text("Clear & Close")
                 }
             },
-            containerColor = Color(0xFF0E121E),
+            containerColor = DarkSurface,
             shape = RoundedCornerShape(24.dp),
-            modifier = Modifier.border(1.dp, Color(0x33FF0055), RoundedCornerShape(24.dp))
+            modifier = Modifier.border(1.dp, DarkBorder, RoundedCornerShape(24.dp))
         )
     }
 }
+
